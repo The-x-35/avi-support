@@ -3,7 +3,10 @@ import { PieChartComponent } from "./pie-chart";
 
 export async function SentimentChart() {
   const tags = await getTagDistribution(7);
-  const sentimentTags = tags.filter((t) => t.type === "sentiment");
+  type TagDistributionItem = Awaited<ReturnType<typeof getTagDistribution>>[number];
+  const sentimentTags = tags.filter(
+    (t: TagDistributionItem) => t.type === "sentiment"
+  );
 
   const COLORS: Record<string, string> = {
     positive: "#10b981",
@@ -12,7 +15,7 @@ export async function SentimentChart() {
     angry: "#ef4444",
   };
 
-  const data = sentimentTags.map((t) => ({
+  const data = sentimentTags.map((t: TagDistributionItem) => ({
     name: t.label ?? t.value ?? "",
     value: t.count,
     color: COLORS[t.value ?? ""] ?? "#9ca3af",

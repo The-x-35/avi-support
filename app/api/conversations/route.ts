@@ -1,7 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { getConversations } from "@/lib/services/conversations";
-import type { ConversationStatus, Category, Priority } from "@prisma/client";
+
+type ConversationFilters = NonNullable<Parameters<typeof getConversations>[0]>;
 
 export async function GET(request: NextRequest) {
   const auth = await authenticateRequest(request);
@@ -10,9 +11,9 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
   const filters = {
-    status: searchParams.get("status") as ConversationStatus | null ?? undefined,
-    category: searchParams.get("category") as Category | null ?? undefined,
-    priority: searchParams.get("priority") as Priority | null ?? undefined,
+    status: (searchParams.get("status") ?? undefined) as ConversationFilters["status"],
+    category: (searchParams.get("category") ?? undefined) as ConversationFilters["category"],
+    priority: (searchParams.get("priority") ?? undefined) as ConversationFilters["priority"],
     isAiPaused: searchParams.has("isAiPaused")
       ? searchParams.get("isAiPaused") === "true"
       : undefined,

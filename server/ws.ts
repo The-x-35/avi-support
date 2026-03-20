@@ -503,11 +503,13 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
 const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
 
+const ALLOWED_ORIGIN = process.env.NEXT_PUBLIC_APP_URL;
+
 const wss = new WebSocketServer({
   port: PORT,
   verifyClient: (info: { origin: string; req: IncomingMessage }) => {
-    // Optionally restrict origins in production
-    return true;
+    if (!ALLOWED_ORIGIN) return true; // dev: allow all
+    return info.origin === ALLOWED_ORIGIN;
   },
 });
 

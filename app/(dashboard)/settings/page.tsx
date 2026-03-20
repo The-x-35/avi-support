@@ -26,7 +26,7 @@ export default async function SettingsPage() {
             <h3 className="text-sm font-semibold text-gray-900">Team</h3>
           </div>
           <div className="divide-y divide-gray-50">
-            {agents.map((agent) => (
+            {agents.map((agent: (typeof agents)[number]) => (
               <div key={agent.id} className="flex items-center gap-3 px-5 py-3.5">
                 <Avatar name={agent.name} src={agent.avatarUrl} size="sm" />
                 <div className="flex-1 min-w-0">

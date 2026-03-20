@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model Agent {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  avatarUrl    String?
+  role         Role     @default(AGENT)
+  isActive     Boolean  @default(true)
+  googleId     String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conversations Conversation[]  @relation("AssignedAgent")
+  messages      Message[]
+  segments      Segment[]
+  refreshTokens RefreshToken[]
+
+  @@index([email])
+  @@index([googleId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  agentId   String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revoked   Boolean  @default(false)
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([agentId])
+}
+
+enum Role {
+  ADMIN
+  AGENT
+}
+
+// ─── Core Chat ───────────────────────────────────────────────────────────────
+
+model EndUser {
+  id         String   @id @default(uuid())
+  externalId String   @unique
+  name       String?
+  email      String?
+  phone      String?
+  avatarUrl  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  conversations Conversation[]
+
+  @@index([externalId])
+  @@index([email])
+}
+
+model Conversation {
+  id              String             @id @default(uuid())
+  userId          String
+  category        Category           @default(GENERAL)
+  status          ConversationStatus @default(OPEN)
+  isAiPaused      Boolean            @default(false)
+  assignedAgentId String?
+  priority        Priority           @default(MEDIUM)
+  subject         String?
+  lastMessageAt   DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  user          EndUser @relation(fields: [userId], references: [id])
+  assignedAgent Agent?  @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
+  messages      Message[]
+  tags          Tag[]
+  ticket        Ticket?
+
+  @@index([userId])
+  @@index([status])
+  @@index([assignedAgentId])
+  @@index([lastMessageAt])
+  @@index([createdAt])
+  @@index([isAiPaused])
+}
+
+model Message {
+  id             String     @id @default(uuid())
+  conversationId String
+  senderType     SenderType
+  senderId       String?
+  content        String
+  isStreaming    Boolean    @default(false)
+  metadata       Json?
+  createdAt      DateTime   @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent        Agent?       @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@index([senderType])
+}
+
+enum SenderType {
+  USER
+  AI
+  AGENT
+}
+
+enum Category {
+  CARDS
+  ACCOUNT
+  SPENDS
+  KYC
+  GENERAL
+  OTHER
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  ESCALATED
+  CLOSED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ─── Tagging ─────────────────────────────────────────────────────────────────
+
+model TagDefinition {
+  id        String   @id @default(uuid())
+  type      String
+  value     String
+  label     String
+  color     String?
+  isSystem  Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tags Tag[]
+
+  @@unique([type, value])
+  @@index([type])
+}
+
+model Tag {
+  id             String    @id @default(uuid())
+  conversationId String
+  definitionId   String
+  confidence     Float?
+  source         TagSource @default(AI)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  definition   TagDefinition @relation(fields: [definitionId], references: [id])
+
+  @@unique([conversationId, definitionId])
+  @@index([conversationId])
+  @@index([definitionId])
+}
+
+enum TagSource {
+  AI
+  AGENT
+  SYSTEM
+}
+
+// ─── Segments ────────────────────────────────────────────────────────────────
+
+model Segment {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  filters     Json
+  createdById String
+  isPinned    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy Agent @relation(fields: [createdById], references: [id])
+
+  @@index([createdById])
+}
+
+// ─── Ticketing ────────────────────────────────────────────────────────────────
+
+model Ticket {
+  id              String       @id @default(uuid())
+  conversationId  String?      @unique
+  title           String
+  description     String?
+  status          TicketStatus @default(OPEN)
+  priority        Priority     @default(MEDIUM)
+  assignedAgentId String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
+
+  @@index([status])
+  @@index([assignedAgentId])
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING_USER
+  RESOLVED
+  CLOSED
+}

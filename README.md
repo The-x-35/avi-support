@@ -1,36 +1,152 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Avi Support — Internal Ops Dashboard
 
-## Getting Started
+Production-grade internal support tool replacing Zendesk. AI-first, real-time, built for the Avici ops team.
 
-First, run the development server:
+## Stack
+
+- **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4
+- **Backend:** Next.js API routes, Node.js WebSocket server
+- **Database:** PostgreSQL via Prisma 7 (driver adapter)
+- **Auth:** Google OAuth + JWT (access + refresh tokens, HTTP-only cookies, RBAC)
+- **AI:** OpenAI GPT-4o with streaming + auto-classification
+- **Real-time:** Raw WebSocket server (no Socket.io)
+
+## Features
+
+- **Live Feed** — real-time conversation list with 10s auto-refresh
+- **Conversation View** — streaming AI responses, agent takeover, pause/resume AI, typing indicators
+- **Queue** — paused, escalated, and unassigned conversations
+- **Analytics** — sentiment trends, top issues, daily volume, resolution rates
+- **Segments** — custom filter builder, saved segments, CSV export
+- **Auto-tagging** — AI classifies every conversation (issue type, sentiment, priority, product area)
+- **User Profiles** — full conversation history per user
+
+## Setup
+
+### 1. Prerequisites
+
+- Node.js 18+
+- PostgreSQL 14+
+
+### 2. Clone & Install
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone <repo>
+cd dashboard
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Configure Environment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cp .env.example .env
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Edit `.env`:
 
-## Learn More
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/auth/callback` |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `JWT_ACCESS_SECRET` | 32+ char random string |
+| `JWT_REFRESH_SECRET` | 32+ char random string |
 
-To learn more about Next.js, take a look at the following resources:
+### 4. Google OAuth Setup
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create OAuth 2.0 credentials
+3. Add authorized redirect URI: `http://localhost:3000/api/auth/callback`
+4. Copy Client ID and Secret to `.env`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 5. Database Setup
 
-## Deploy on Vercel
+```bash
+# Run migrations
+npm run db:migrate
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Seed demo data (20 realistic conversations)
+npm run db:seed
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 6. Run
+
+```bash
+# Terminal 1: Next.js app
+npm run dev
+
+# Terminal 2: WebSocket server
+npm run dev:ws
+```
+
+Open [http://localhost:3000](http://localhost:3000)
+
+## Architecture
+
+```
+/
+├── app/                    # Next.js App Router
+│   ├── (dashboard)/        # Authenticated pages
+│   │   ├── page.tsx        # Overview
+│   │   ├── live/           # Live feed
+│   │   ├── queue/          # Queue
+│   │   ├── analytics/      # Analytics
+│   │   ├── segments/       # Segments
+│   │   ├── conversations/  # Conversation detail
+│   │   ├── users/          # User profiles
+│   │   └── settings/       # Settings & admin
+│   ├── api/                # API routes
+│   │   ├── auth/           # Google OAuth, JWT refresh, logout
+│   │   ├── conversations/  # CRUD + control endpoints
+│   │   ├── analytics/      # Stats endpoints
+│   │   ├── segments/       # Segment CRUD + execute + export
+│   │   └── agents/         # Agent management
+│   └── login/              # Login page
+├── components/
+│   ├── ui/                 # Badge, Button, Input, Avatar, StatCard
+│   ├── layout/             # Sidebar, Header
+│   ├── conversations/      # LiveFeed, Queue, ConversationView, UserProfile
+│   ├── analytics/          # Charts, OverviewStats
+│   └── segments/           # SegmentsView, SegmentBuilder, SegmentResults
+├── lib/
+│   ├── auth/               # JWT, cookies, Google OAuth, session
+│   ├── db/                 # Prisma client
+│   ├── ai/                 # OpenAI provider + abstract AIProvider interface
+│   ├── services/           # Business logic (conversations, analytics, segments)
+│   └── utils/              # cn, format
+├── server/
+│   └── ws.ts               # Standalone WebSocket server
+└── prisma/
+    ├── schema.prisma        # DB schema
+    └── seed.ts             # Demo seed data
+```
+
+## WebSocket Events
+
+**Client → Server:**
+- `auth` — authenticate with JWT token
+- `join` / `leave` — join/leave a conversation room
+- `send_message` — send a message
+- `typing` — typing indicator
+- `control` — pause_ai / resume_ai / takeover / release
+
+**Server → Client:**
+- `message` — new message
+- `ai_chunk` — streaming AI token
+- `ai_done` — AI stream complete
+- `typing` — typing indicator
+- `control` — control state change
+- `tag_update` — AI re-classified conversation
+
+## Auth Flow
+
+1. `/api/auth/google` → redirects to Google OAuth
+2. Google redirects to `/api/auth/callback` with code
+3. Server exchanges code for Google user info
+4. Upserts agent in DB, issues access (15m) + refresh (7d) JWT
+5. Tokens set as HTTP-only cookies
+6. Middleware validates access token on every request
+7. Expired access token → redirected to `/api/auth/refresh`
+8. Refresh rotates both tokens (revokes old refresh token in DB)

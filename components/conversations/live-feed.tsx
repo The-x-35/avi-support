@@ -22,6 +22,7 @@ interface ConversationItem {
   messages: Array<{ content: string; senderType: string; createdAt: string }>;
   _count: { messages: number };
 }
+type ConversationTag = ConversationItem["tags"][number];
 
 type StatusFilter = "ALL" | "OPEN" | "PENDING" | "ESCALATED" | "RESOLVED";
 
@@ -127,13 +128,13 @@ export function LiveFeed() {
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {conversations.map((conv) => {
+            {conversations.map((conv: ConversationItem) => {
               const lastMsg = conv.messages[0];
               const sentimentTag = conv.tags.find(
-                (t) => t.definition.type === "sentiment"
+                (t: ConversationTag) => t.definition.type === "sentiment"
               );
               const issueTag = conv.tags.find(
-                (t) => t.definition.type === "issue_type"
+                (t: ConversationTag) => t.definition.type === "issue_type"
               );
 
               return (

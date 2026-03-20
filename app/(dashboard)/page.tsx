@@ -9,7 +9,7 @@ import { SentimentChart } from "@/components/analytics/sentiment-chart";
 function StatsSkeleton() {
   return (
     <div className="grid grid-cols-4 gap-4">
-      {[1, 2, 3, 4].map((i) => (
+      {[1, 2, 3, 4].map((i: number) => (
         <div key={i} className="bg-white border border-gray-100 rounded-xl p-5 animate-pulse">
           <div className="h-3 w-20 bg-gray-100 rounded mb-3" />
           <div className="h-8 w-14 bg-gray-100 rounded" />
@@ -31,7 +31,7 @@ function ChartSkeleton() {
 function ConvSkeleton() {
   return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden animate-pulse">
-      {[1, 2, 3, 4, 5].map((i) => (
+      {[1, 2, 3, 4, 5].map((i: number) => (
         <div key={i} className="flex items-center gap-3 px-5 py-3.5 border-b border-gray-50">
           <div className="w-8 h-8 rounded-full bg-gray-100 shrink-0" />
           <div className="flex-1 space-y-1.5">

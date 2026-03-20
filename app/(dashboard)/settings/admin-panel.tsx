@@ -55,8 +55,8 @@ export function AdminPanel({
       </div>
       <div className="divide-y divide-gray-50">
         {agents
-          .filter((a) => a.id !== currentAgentId)
-          .map((agent) => (
+          .filter((a: Agent) => a.id !== currentAgentId)
+          .map((agent: Agent) => (
             <div key={agent.id} className="flex items-center gap-3 px-5 py-3.5">
               <Avatar name={agent.name} src={agent.avatarUrl} size="sm" />
               <div className="flex-1 min-w-0">

@@ -27,10 +27,14 @@ interface UserProfileProps {
     }>;
   };
 }
+type UserConversation = UserProfileProps["user"]["conversations"][number];
+type UserConversationTag = UserConversation["tags"][number];
 
 export function UserProfile({ user }: UserProfileProps) {
   const totalChats = user.conversations.length;
-  const resolved = user.conversations.filter((c) => c.status === "RESOLVED").length;
+  const resolved = user.conversations.filter(
+    (c: UserConversation) => c.status === "RESOLVED"
+  ).length;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -92,13 +96,13 @@ export function UserProfile({ user }: UserProfileProps) {
               </div>
             ) : (
               <div className="divide-y divide-gray-50">
-                {user.conversations.map((conv) => {
+                {user.conversations.map((conv: UserConversation) => {
                   const lastMsg = conv.messages[0];
                   const sentimentTag = conv.tags.find(
-                    (t) => t.definition.type === "sentiment"
+                    (t: UserConversationTag) => t.definition.type === "sentiment"
                   );
                   const issueTag = conv.tags.find(
-                    (t) => t.definition.type === "issue_type"
+                    (t: UserConversationTag) => t.definition.type === "issue_type"
                   );
 
                   return (

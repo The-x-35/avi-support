@@ -22,6 +22,7 @@ interface ConversationItem {
   messages: Array<{ content: string; senderType: string; createdAt: string }>;
   _count: { messages: number };
 }
+type ConversationTag = ConversationItem["tags"][number];
 
 export function Queue() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
@@ -119,10 +120,10 @@ export function Queue() {
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {conversations.map((conv) => {
+            {conversations.map((conv: ConversationItem) => {
               const lastMsg = conv.messages[0];
               const issueTag = conv.tags.find(
-                (t) => t.definition.type === "issue_type"
+                (t: ConversationTag) => t.definition.type === "issue_type"
               );
 
               return (

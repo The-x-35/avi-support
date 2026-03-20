@@ -60,7 +60,7 @@ export function AnalyticsDashboard() {
     );
   }
 
-  const sentimentData = data.sentiment.map((s) => ({
+  const sentimentData = data.sentiment.map((s: { value: string; label: string; count: number }) => ({
     name: s.label,
     value: s.count,
     color: SENTIMENT_COLORS[s.value] ?? "#9ca3af",
@@ -120,7 +120,7 @@ export function AnalyticsDashboard() {
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">Top Issues</h3>
           <BarChart
-            data={data.topIssues.map((i) => ({
+            data={data.topIssues.map((i: { label: string; value: string; count: number }) => ({
               label: i.label ?? i.value,
               value: i.count,
             }))}
@@ -139,7 +139,7 @@ export function AnalyticsDashboard() {
           Daily Volume
         </h3>
         <BarChart
-          data={data.volume.map((v) => ({
+          data={data.volume.map((v: { date: string; count: number }) => ({
             label: v.date,
             value: v.count,
           }))}

@@ -24,6 +24,7 @@ interface Conversation {
   tags: Array<{ definition: { type: string; value: string; label: string } }>;
   messages: Array<{ content: string }>;
 }
+type SegmentConversationTag = Conversation["tags"][number];
 
 interface SegmentResultsProps {
   segment: Segment;
@@ -99,9 +100,11 @@ export function SegmentResults({ segment, onBack }: SegmentResultsProps) {
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {conversations.map((conv) => {
+            {conversations.map((conv: Conversation) => {
               const lastMsg = conv.messages[0];
-              const issueTag = conv.tags.find((t) => t.definition.type === "issue_type");
+              const issueTag = conv.tags.find(
+                (t: SegmentConversationTag) => t.definition.type === "issue_type"
+              );
 
               return (
                 <Link

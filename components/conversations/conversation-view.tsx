@@ -337,7 +337,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50">
-          {messages.map((msg) => (
+          {messages.map((msg: Message) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
 
@@ -448,13 +448,13 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               AI Tags
             </h3>
             <div className="space-y-2">
-              {Object.entries(tagsByType).map(([type, tags]) => (
+              {Object.entries(tagsByType).map(([type, tags]: [string, Tag[]]) => (
                 <div key={type} className="flex items-center justify-between">
                   <span className="text-xs text-gray-400 capitalize">
                     {type.replace(/_/g, " ")}
                   </span>
                   <div className="flex gap-1 flex-wrap justify-end">
-                    {tags.map((tag) => {
+                    {tags.map((tag: Tag) => {
                       if (tag.definition.type === "sentiment") {
                         return <SentimentBadge key={tag.id} sentiment={tag.definition.value} />;
                       }

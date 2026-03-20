@@ -92,7 +92,7 @@ export function SegmentsView() {
           </div>
         ) : (
           <div className="space-y-3">
-            {segments.map((seg) => (
+            {segments.map((seg: Segment) => (
               <div
                 key={seg.id}
                 className="bg-white border border-gray-100 rounded-xl p-4 hover:border-gray-200 transition-colors"

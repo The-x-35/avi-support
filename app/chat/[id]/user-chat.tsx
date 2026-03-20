@@ -297,7 +297,7 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg: Message) => (
           <ChatBubble key={msg.id} message={msg} />
         ))}
 

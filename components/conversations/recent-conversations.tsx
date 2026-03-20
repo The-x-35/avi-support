@@ -7,6 +7,9 @@ import { Bot, User } from "lucide-react";
 
 export async function RecentConversations() {
   const { conversations } = await getConversations({ limit: 10 });
+  type RecentConversation = Awaited<
+    ReturnType<typeof getConversations>
+  >["conversations"][number];
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
@@ -26,10 +29,11 @@ export async function RecentConversations() {
         </div>
       ) : (
         <div className="divide-y divide-gray-50">
-          {conversations.map((conv) => {
+          {conversations.map((conv: RecentConversation) => {
             const lastMsg = conv.messages[0];
             const sentimentTag = conv.tags.find(
-              (t) => t.definition.type === "sentiment"
+              (t: RecentConversation["tags"][number]) =>
+                t.definition.type === "sentiment"
             );
             return (
               <Link

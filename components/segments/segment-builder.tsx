@@ -131,7 +131,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Match</span>
             <div className="flex gap-1">
-              {(["AND", "OR"] as const).map((op) => (
+              {(["AND", "OR"] as const).map((op: "AND" | "OR") => (
                 <button
                   key={op}
                   onClick={() => setOperator(op)}
@@ -150,14 +150,14 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
 
           {/* Conditions */}
           <div className="space-y-2">
-            {conditions.map((cond, i) => (
+            {conditions.map((cond: FilterCondition, i: number) => (
               <div key={i} className="flex items-center gap-2">
                 <select
                   value={cond.field}
                   onChange={(e) => updateCondition(i, "field", e.target.value)}
                   className="h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {FIELD_OPTIONS.map((opt) => (
+                  {FIELD_OPTIONS.map((opt: { value: string; label: string }) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -179,7 +179,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
                   onChange={(e) => updateCondition(i, "value", e.target.value)}
                   className="flex-1 h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {(VALUE_OPTIONS[cond.field] ?? []).map((v) => (
+                  {(VALUE_OPTIONS[cond.field] ?? []).map((v: string) => (
                     <option key={v} value={v}>
                       {v}
                     </option>

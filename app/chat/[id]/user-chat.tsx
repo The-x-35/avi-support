@@ -284,10 +284,30 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [inputScope, animateInput] = useAnimate();
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
+
+  // Shrink container to visual viewport height when keyboard opens (iOS + Android)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      if (containerRef.current) {
+        containerRef.current.style.height = `${vv.height}px`;
+        containerRef.current.style.transform = `translateY(${vv.offsetTop}px)`;
+      }
+      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "instant" }));
+    };
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
   }, []);
 
   useEffect(() => { scrollToBottom(); }, [messages, streamingId]);
@@ -431,8 +451,9 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
 
   return (
     <div
+      ref={containerRef}
       className="flex flex-col bg-white w-full h-full"
-      style={{ WebkitTapHighlightColor: "transparent" }}
+      style={{ WebkitTapHighlightColor: "transparent", transformOrigin: "top left" }}
     >
       {activeEffect === "lasers" && <LaserOverlay onDone={() => setActiveEffect(null)} />}
       {activeEffect === "fireworks" && <FireworksOverlay onDone={() => setActiveEffect(null)} />}

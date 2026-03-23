@@ -36,11 +36,17 @@ type ServerEvent =
   | { type: "error"; payload: { code: string; message: string } }
   | { type: "ack"; payload: { ref: string } };
 
+interface MediaMeta {
+  url: string;
+  mimeType: string;
+  fileName: string;
+}
+
 type ClientEvent =
   | { type: "auth"; token: string; role: ClientRole; ref?: string }
   | { type: "join"; conversationId: string; ref?: string }
   | { type: "leave"; conversationId: string; ref?: string }
-  | { type: "send_message"; conversationId: string; content: string; ref?: string }
+  | { type: "send_message"; conversationId: string; content: string; mediaId?: string; ref?: string }
   | { type: "typing"; conversationId: string; isTyping: boolean }
   | { type: "control"; conversationId: string; action: "pause_ai" | "resume_ai" | "takeover" | "release" | "resolve" | "escalate" };
 
@@ -52,6 +58,7 @@ interface MessagePayload {
   content: string;
   createdAt: string;
   senderName?: string;
+  media?: MediaMeta;
 }
 
 interface AiChunkPayload {
@@ -356,7 +363,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
     case "send_message": {
       if (!client) return;
 
-      const { conversationId, content } = event;
+      const { conversationId, content, mediaId } = event;
 
       const conversation = await prisma.conversation.findUnique({
         where: { id: conversationId },
@@ -377,12 +384,18 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         senderName = conversation.user.name ?? "User";
       }
 
+      // Look up media record if provided
+      const mediaRecord = mediaId
+        ? await prisma.media.findUnique({ where: { id: mediaId } })
+        : null;
+
       const message = await prisma.message.create({
         data: {
           conversationId,
           senderType,
           senderId: senderId ?? null,
           content,
+          ...(mediaRecord ? { mediaId: mediaRecord.id } : {}),
         },
       });
 
@@ -399,6 +412,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         content,
         createdAt: message.createdAt.toISOString(),
         senderName,
+        media: mediaRecord ?? undefined,
       };
 
       // Broadcast to all in room

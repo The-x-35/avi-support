@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
+import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 export async function GET(
   request: NextRequest,
@@ -8,6 +11,8 @@ export async function GET(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
+
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { userId } = await params;
 
@@ -24,6 +29,7 @@ export async function GET(
           _count: { select: { messages: true } },
         },
         orderBy: { lastMessageAt: "desc" },
+        take: 50, // cap — don't load unbounded conversation history
       },
     },
   });

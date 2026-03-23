@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
+import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 export async function GET(
   request: NextRequest,
@@ -8,6 +11,8 @@ export async function GET(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
+
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
   const tags = await prisma.tag.findMany({
@@ -25,12 +30,27 @@ export async function POST(
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
+
   const { id } = await params;
   const { type, value, label, color } = await request.json();
 
+  if (!type || !value || typeof type !== "string" || typeof value !== "string") {
+    return NextResponse.json({ error: "type and value are required" }, { status: 400 });
+  }
+
+  if (type.length > 64 || value.length > 64) {
+    return NextResponse.json({ error: "type and value must be under 64 characters" }, { status: 400 });
+  }
+
   const definition = await prisma.tagDefinition.upsert({
     where: { type_value: { type, value } },
-    create: { type, value, label: label ?? value, color },
+    create: {
+      type,
+      value,
+      label: typeof label === "string" ? label.slice(0, 128) : value,
+      color: typeof color === "string" ? color.slice(0, 32) : null,
+    },
     update: {},
   });
 
@@ -59,6 +79,8 @@ export async function DELETE(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
+
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
   const { searchParams } = new URL(request.url);

@@ -13,7 +13,11 @@
       "Bash(npx tsc:*)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:blog.logrocket.com)"
+      "WebFetch(domain:blog.logrocket.com)",
+      "Bash(npx prisma:*)",
+      "Bash(curl -v -X POST http://localhost:3000/api/upload/presign -H \"Content-Type: application/json\" -d '{\"\"\"\"fileName\"\"\"\":\"\"\"\"test.jpg\"\"\"\",\"\"\"\"mimeType\"\"\"\":\"\"\"\"image/jpeg\"\"\"\",\"\"\"\"fileSize\"\"\"\":1000}')",
+      "Bash(curl -s -X POST http://localhost:3000/api/upload/presign -H \"Content-Type: application/json\" -d '{\"\"\"\"fileName\"\"\"\":\"\"\"\"test.jpg\"\"\"\",\"\"\"\"mimeType\"\"\"\":\"\"\"\"image/jpeg\"\"\"\",\"\"\"\"fileSize\"\"\"\":1000}')",
+      "Bash(grep -v \"^$\")"
     ]
   }
 }

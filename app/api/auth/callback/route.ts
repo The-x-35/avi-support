@@ -1,11 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { exchangeGoogleCode, getGoogleUserInfo } from "@/lib/auth/google";
 import { signAccessToken, signRefreshToken } from "@/lib/auth/jwt";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { prisma } from "@/lib/db/prisma";
 import { v4 as uuidv4 } from "uuid";
+import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
 
-export async function GET(request: Request) {
+// 10 callback attempts per IP per minute — prevents code-stuffing attacks
+const limiter = createRateLimiter({ limit: 10, windowMs: 60_000 });
+
+export async function GET(request: NextRequest) {
+  if (!limiter.check(getIP(request))) return tooManyRequests();
+
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const state = searchParams.get("state"); // the redirect path

@@ -7,27 +7,34 @@ import {
   getTopIssues,
   getVolumeByDay,
 } from "@/lib/services/analytics";
+import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+
+// Analytics queries are expensive — 20 per agent per minute
+const limiter = createRateLimiter({ limit: 20, windowMs: 60_000 });
+
+const VALID_TYPES = new Set(["overview", "tag_distribution", "sentiment_trend", "top_issues", "volume"]);
 
 export async function GET(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
+
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type") ?? "overview";
-  const days = parseInt(searchParams.get("days") ?? "7");
+
+  if (!VALID_TYPES.has(type)) {
+    return NextResponse.json({ error: "Unknown analytics type" }, { status: 400 });
+  }
+
+  const rawDays = parseInt(searchParams.get("days") ?? "7");
+  const days = Math.min(Math.max(1, rawDays), 90); // clamp 1–90 days
 
   switch (type) {
-    case "overview":
-      return NextResponse.json(await getOverviewStats());
-    case "tag_distribution":
-      return NextResponse.json(await getTagDistribution(days));
-    case "sentiment_trend":
-      return NextResponse.json(await getSentimentTrend(days));
-    case "top_issues":
-      return NextResponse.json(await getTopIssues(days));
-    case "volume":
-      return NextResponse.json(await getVolumeByDay(days));
-    default:
-      return NextResponse.json({ error: "Unknown analytics type" }, { status: 400 });
+    case "overview":          return NextResponse.json(await getOverviewStats());
+    case "tag_distribution":  return NextResponse.json(await getTagDistribution(days));
+    case "sentiment_trend":   return NextResponse.json(await getSentimentTrend(days));
+    case "top_issues":        return NextResponse.json(await getTopIssues(days));
+    case "volume":            return NextResponse.json(await getVolumeByDay(days));
   }
 }

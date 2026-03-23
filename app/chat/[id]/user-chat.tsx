@@ -4,10 +4,50 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useTransform, useAnimate } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
-import { Send, ChevronLeft, Shield, CheckCircle, ArrowUpCircle } from "lucide-react";
+import { Send, ChevronLeft, Shield, CheckCircle, ArrowUpCircle, Bot, User, Paperclip, X, Play } from "lucide-react";
 import confetti from "canvas-confetti";
 import { Fireworks } from "@fireworks-js/react";
+import imageCompression from "browser-image-compression";
 
+// ─── Media upload ────────────────────────────────────────────────────────────
+const ALLOWED_MIME = new Set([
+  "image/jpeg","image/png","image/gif","image/webp","image/heic","image/heif",
+  "video/mp4","video/quicktime","video/webm","video/x-m4v",
+]);
+const ALLOWED_EXT = new Set(["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov","webm","m4v"]);
+const MAX_IMAGE = 10 * 1024 * 1024;
+const MAX_VIDEO = 50 * 1024 * 1024;
+
+interface PendingMedia {
+  file: File;
+  previewUrl: string;
+  isVideo: boolean;
+}
+
+async function safeJson(res: Response) {
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(`Server error (${res.status}): ${text.slice(0, 120)}`);
+  }
+  return res.json();
+}
+
+async function uploadMedia(file: File, conversationId: string): Promise<{ url: string; mimeType: string; fileName: string; mediaId: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("conversationId", conversationId);
+
+  const res = await fetch("/api/upload/file", { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await safeJson(res).catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
+  }
+  const { url, mediaId, mimeType, fileName } = await safeJson(res);
+  return { url, mediaId, mimeType, fileName };
+}
+
+// ─── iMessage spring ─────────────────────────────────────────────────────────
 // iMessage-accurate spring: fast rise, tiny overshoot, snaps clean
 const BUBBLE_SPRING = {
   type: "spring" as const,
@@ -16,13 +56,6 @@ const BUBBLE_SPRING = {
   mass: 0.4,
 };
 
-const BOT_GIFS = [
-  "/bots/robot.gif", "/bots/robot-2.gif", "/bots/robot-3.gif", "/bots/robot-4.gif",
-  "/bots/robot-5.gif", "/bots/robot-6.gif", "/bots/robot-7.gif", "/bots/brain.gif",
-  "/bots/robot-arm.gif", "/bots/robot-cycle.gif", "/bots/robot-talking.gif",
-  "/bots/robot-3.gif", "/bots/robotics.gif", "/bots/settings.gif",
-  "/bots/turing-test.gif", "/bots/chatbot-2.gif", "/bots/robotic-arm.gif",
-];
 
 // --- Screen Effects ---
 type ScreenEffect = "confetti" | "fireworks" | "lasers" | "hearts" | null;
@@ -71,6 +104,13 @@ const SEND_SPRING = {
   mass: 0.9,
 };
 
+interface MediaMeta {
+  id: string;
+  url: string;
+  mimeType: string;
+  fileName: string;
+}
+
 interface Message {
   id: string;
   senderType: "USER" | "AI" | "AGENT";
@@ -78,6 +118,7 @@ interface Message {
   isStreaming: boolean;
   createdAt: string;
   agent: { name: string; avatarUrl: string | null } | null;
+  media?: MediaMeta;
 }
 
 interface Conversation {
@@ -133,59 +174,6 @@ function needsHeader(prev: Message | null, curr: Message): boolean {
 }
 
 // --- Sound & Haptics ---
-function playMessageSound() {
-  try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AudioCtx();
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(0.18, ctx.currentTime);
-    master.connect(ctx.destination);
-
-    // Primary sweep: 900 → 1700 Hz — the iMessage "whoosh"
-    const osc1 = ctx.createOscillator();
-    const g1 = ctx.createGain();
-    osc1.type = "sine";
-    osc1.frequency.setValueAtTime(900, ctx.currentTime);
-    osc1.frequency.exponentialRampToValueAtTime(1700, ctx.currentTime + 0.13);
-    g1.gain.setValueAtTime(0, ctx.currentTime);
-    g1.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.018);
-    g1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
-    osc1.connect(g1); g1.connect(master);
-    osc1.start(ctx.currentTime); osc1.stop(ctx.currentTime + 0.22);
-
-    // Second harmonic — adds the bright, airy quality
-    const osc2 = ctx.createOscillator();
-    const g2 = ctx.createGain();
-    osc2.type = "sine";
-    osc2.frequency.setValueAtTime(1800, ctx.currentTime);
-    osc2.frequency.exponentialRampToValueAtTime(3400, ctx.currentTime + 0.11);
-    g2.gain.setValueAtTime(0, ctx.currentTime);
-    g2.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.015);
-    g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    osc2.connect(g2); g2.connect(master);
-    osc2.start(ctx.currentTime); osc2.stop(ctx.currentTime + 0.18);
-
-    // Soft body — triangle wave for warmth
-    const osc3 = ctx.createOscillator();
-    const g3 = ctx.createGain();
-    osc3.type = "triangle";
-    osc3.frequency.setValueAtTime(1100, ctx.currentTime);
-    osc3.frequency.exponentialRampToValueAtTime(2000, ctx.currentTime + 0.1);
-    g3.gain.setValueAtTime(0, ctx.currentTime);
-    g3.gain.linearRampToValueAtTime(0.5, ctx.currentTime + 0.012);
-    g3.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-    osc3.connect(g3); g3.connect(master);
-    osc3.start(ctx.currentTime); osc3.stop(ctx.currentTime + 0.15);
-
-    setTimeout(() => ctx.close(), 600);
-  } catch { /* audio unavailable */ }
-}
-
-function triggerHaptic(pattern: number | number[] = 10) {
-  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
-    navigator.vibrate(pattern);
-  }
-}
 
 // --- Screen Effects ---
 const LASER_COLORS = ["#ff2d55", "#30d158", "#0a84ff", "#bf5af2", "#ffd60a", "#32ade6", "#ff6961"];
@@ -239,6 +227,9 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
   const [isAgentActive, setIsAgentActive] = useState(initial.isAiPaused && !!initial.assignedAgentId);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [wsReady, setWsReady] = useState(false);
   const [wsError, setWsError] = useState(false);
 
@@ -251,35 +242,6 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
 
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   const [activeEffect, setActiveEffect] = useState<ScreenEffect>(null);
-  const gifMapRef = useRef<Map<string, string>>(new Map());
-  const gifQueueRef = useRef<string[]>([]);
-  const lastGifRef = useRef<string | null>(null);
-
-  function nextGif(): string {
-    if (gifQueueRef.current.length === 0) {
-      const shuffled = [...BOT_GIFS];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      // Ensure the first item popped (last in array) doesn't match the previous gif
-      if (lastGifRef.current && shuffled[shuffled.length - 1] === lastGifRef.current) {
-        const swapIdx = Math.floor(Math.random() * (shuffled.length - 1));
-        [shuffled[shuffled.length - 1], shuffled[swapIdx]] = [shuffled[swapIdx], shuffled[shuffled.length - 1]];
-      }
-      gifQueueRef.current = shuffled;
-    }
-    const gif = gifQueueRef.current.pop()!;
-    lastGifRef.current = gif;
-    return gif;
-  }
-
-  function getGifForMsg(id: string): string {
-    if (!gifMapRef.current.has(id)) {
-      gifMapRef.current.set(id, nextGif());
-    }
-    return gifMapRef.current.get(id)!;
-  }
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -345,10 +307,12 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
   }
 
   useEffect(() => {
+    let cancelled = false;
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (cancelled) { ws.close(); return; }
       ws.send(JSON.stringify({ type: "auth", token: getUserId(), role: "user" }));
       ws.send(JSON.stringify({ type: "join", conversationId: initial.id }));
       setWsReady(true);
@@ -367,6 +331,7 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
               id: p.id, senderType: p.senderType, content: p.content,
               isStreaming: false, createdAt: p.createdAt,
               agent: p.senderName ? { name: p.senderName, avatarUrl: null } : null,
+              media: p.media ?? undefined,
             }];
           });
           break;
@@ -402,44 +367,103 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
     ws.onerror = () => { setWsReady(false); setWsError(true); };
 
     return () => {
-      if (ws.readyState === WebSocket.OPEN)
+      cancelled = true;
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "leave", conversationId: initial.id }));
-      ws.close();
+        ws.close();
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        ws.addEventListener("open", () => ws.close(), { once: true });
+      }
     };
   }, [initial.id]);
 
+  async function handleFilePick(file: File) {
+    setUploadError(null);
+
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!ALLOWED_EXT.has(ext) || !ALLOWED_MIME.has(file.type)) {
+      setUploadError("Only images (jpg, png, gif, webp) and videos (mp4, mov, webm) are allowed.");
+      return;
+    }
+
+    const isVideo = file.type.startsWith("video/");
+    const maxBytes = isVideo ? MAX_VIDEO : MAX_IMAGE;
+
+    if (file.size > maxBytes) {
+      setUploadError(`${isVideo ? "Video" : "Image"} too large. Max ${maxBytes / 1024 / 1024}MB.`);
+      return;
+    }
+
+    let finalFile = file;
+    if (!isVideo) {
+      try {
+        const compressed = await imageCompression(file, {
+          maxSizeMB: 2,
+          maxWidthOrHeight: 1920,
+          useWebWorker: true,
+          fileType: file.type as "image/jpeg" | "image/png" | "image/webp",
+        });
+        // Restore original filename — compression can rename to "blob"
+        finalFile = new File([compressed], file.name, { type: compressed.type || file.type });
+      } catch {
+        // compression failed — use original
+      }
+    }
+
+    const previewUrl = URL.createObjectURL(finalFile);
+    setPendingMedia({ file: finalFile, previewUrl, isVideo });
+  }
+
+  function clearMedia() {
+    if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
+    setPendingMedia(null);
+    setUploadError(null);
+  }
+
   async function sendMessage() {
-    if (!text.trim() || sending || !wsReady) return;
+    if ((!text.trim() && !pendingMedia) || sending || !wsReady) return;
     const content = text.trim();
     const tempId = `temp_${Date.now()}`;
+    setSending(true);
+    setUploadError(null);
 
-    // Sound + haptic feedback
-    playMessageSound();
-    triggerHaptic(12);
+    // Upload media first if attached
+    let media: MediaMeta | undefined;
+    if (pendingMedia) {
+      try {
+        const uploaded = await uploadMedia(pendingMedia.file, initial.id);
+        media = { id: uploaded.mediaId, url: uploaded.url, mimeType: uploaded.mimeType, fileName: uploaded.fileName };
+        clearMedia();
+      } catch (err: unknown) {
+        setUploadError(err instanceof Error ? err.message : "Upload failed");
+        setSending(false);
+        return;
+      }
+    }
 
-    // Trigger screen effect if message matches
-    const effect = detectEffect(content);
-    if (effect === "confetti") fireConfetti();
-    else if (effect === "hearts") fireHearts();
-    else if (effect === "fireworks" || effect === "lasers") setActiveEffect(effect);
+    if (content) {
+      const effect = detectEffect(content);
+      if (effect === "confetti") fireConfetti();
+      else if (effect === "hearts") fireHearts();
+      else if (effect === "fireworks" || effect === "lasers") setActiveEffect(effect);
+    }
 
-    // Input launch animation: squeeze down then snap back
     animateInput(inputScope.current, { scaleY: 0.82, opacity: 0.5 }, { duration: 0.08 }).then(() => {
       setText("");
       animateInput(inputScope.current, { scaleY: 1, opacity: 1 }, { duration: 0.18, ease: [0.34, 1.56, 0.64, 1] });
     });
 
-    setSending(true);
     setFreshIds((prev) => new Set([...prev, tempId]));
     setMessages((prev) => [...prev, {
       id: tempId, senderType: "USER",
-      content, isStreaming: false,
+      content: content || (media ? media.fileName : ""),
+      isStreaming: false,
       createdAt: new Date().toISOString(), agent: null,
+      media,
     }]);
-    wsRef.current!.send(JSON.stringify({ type: "send_message", conversationId: initial.id, content }));
+    wsRef.current!.send(JSON.stringify({ type: "send_message", conversationId: initial.id, content, mediaId: media?.id }));
     setSending(false);
     inputRef.current?.focus();
-    // Retire freshId after animation completes
     setTimeout(() => setFreshIds((prev) => { const n = new Set(prev); n.delete(tempId); return n; }), 800);
   }
 
@@ -477,13 +501,11 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
-          <img
-            key={isAgentActive ? "human" : "chatbot"}
-            src={isAgentActive ? "/human.gif" : "/chatbot.gif"}
-            alt={isAgentActive ? "Support Agent" : "Avi"}
-            className="w-10 h-10 shrink-0 object-contain"
-            unselectable="on"
-          />
+          <div className="w-9 h-9 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
+            {isAgentActive
+              ? <User className="w-4 h-4 text-white" />
+              : <Bot className="w-4 h-4 text-white" />}
+          </div>
           <div className="flex-1 min-w-0 ml-0.5">
             <p className="text-[15px] font-semibold text-gray-900 leading-tight">{isAgentActive ? "Support Agent" : "Avi"}</p>
             <div className="flex items-center gap-1.5 mt-0.5">
@@ -528,7 +550,9 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
             style={{ originX: 0, originY: 1 }}
           >
             <div className="flex items-end gap-2 max-w-[82%]">
-              <img src="/chatbot.gif" alt="Avi" className="w-8 h-8 rounded-full shrink-0 object-cover" />
+              <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
+                <Bot className="w-3.5 h-3.5 text-white" />
+              </div>
               <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
                 <p className="text-[15px] text-gray-800 leading-relaxed">Hi! I&apos;m Avi, your support assistant. How can I help you today?</p>
               </div>
@@ -549,7 +573,7 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
                   </p>
                 )}
                 <div className={sameAsPrev && !showHeader ? "mb-0.5" : "mb-1.5"}>
-                  <ChatBubble message={msg} isFresh={freshIds.has(msg.id)} gif={msg.senderType !== "USER" ? getGifForMsg(msg.id) : undefined} />
+                  <ChatBubble message={msg} isFresh={freshIds.has(msg.id)} />
                 </div>
               </div>
             );
@@ -569,7 +593,9 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
               style={{ originX: 0, originY: 1 }}
             >
               <div className="flex items-end gap-2 max-w-[82%]">
-                <img src={getGifForMsg(streamingId)} alt="Avi" className="w-8 h-8 rounded-full shrink-0 object-cover" />
+                <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center shrink-0">
+                  <Bot className="w-3.5 h-3.5 text-white" />
+                </div>
                 <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
                   {displayedLen === 0 ? (
                     <span className="text-[15px] text-gray-400 italic">Avi is thinking…</span>
@@ -611,14 +637,72 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
         )}
 
         <div className="px-3 pt-2">
+          {/* Upload error */}
+          {uploadError && (
+            <div className="flex items-center gap-2 bg-red-50 text-red-500 text-xs rounded-2xl px-3 py-2 mb-2">
+              <span className="flex-1">{uploadError}</span>
+              <button onClick={() => setUploadError(null)} className="shrink-0">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Media preview */}
+          {pendingMedia && (
+            <div className="relative inline-block mb-2 ml-1">
+              {pendingMedia.isVideo ? (
+                <div className="w-20 h-20 rounded-2xl bg-gray-900 flex items-center justify-center overflow-hidden">
+                  <video src={pendingMedia.previewUrl} className="w-full h-full object-cover" muted playsInline />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-7 h-7 rounded-full bg-black/50 flex items-center justify-center">
+                      <Play className="w-3.5 h-3.5 text-white ml-0.5" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src={pendingMedia.previewUrl}
+                  alt="attachment"
+                  className="w-20 h-20 rounded-2xl object-cover"
+                />
+              )}
+              <button
+                onClick={clearMedia}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-700 flex items-center justify-center shadow"
+              >
+                <X className="w-3 h-3 text-white" />
+              </button>
+            </div>
+          )}
+
           <motion.div
             ref={inputScope}
             className={cn(
-              "flex items-end gap-2 rounded-3xl border px-4 py-2.5",
+              "flex items-end gap-2 rounded-3xl border px-3 py-2.5",
               wsReady ? "border-gray-200" : "border-gray-100 opacity-60"
             )}
             style={{ backgroundColor: "#f2f2f7", transformOrigin: "bottom center" }}
           >
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/webm,video/x-m4v"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFilePick(f); e.target.value = ""; }}
+            />
+
+            {/* Attach button */}
+            <motion.button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!wsReady || sending}
+              whileTap={wsReady ? { scale: 0.84 } : {}}
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-colors"
+              style={{ touchAction: "manipulation" }}
+            >
+              <Paperclip className="w-4 h-4" />
+            </motion.button>
+
             <textarea
               ref={inputRef}
               value={text}
@@ -632,17 +716,21 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
             />
             <motion.button
               onClick={sendMessage}
-              disabled={!text.trim() || sending || !wsReady}
-              whileTap={text.trim() && wsReady ? { scale: 0.84 } : {}}
+              disabled={(!text.trim() && !pendingMedia) || sending || !wsReady}
+              whileTap={(text.trim() || pendingMedia) && wsReady ? { scale: 0.84 } : {}}
               className={cn(
                 "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all duration-150",
-                text.trim() && wsReady && !sending
+                (text.trim() || pendingMedia) && wsReady && !sending
                   ? "bg-[#0f0f0f] text-white shadow-sm"
                   : "bg-gray-200 text-gray-400 cursor-not-allowed"
               )}
               style={{ touchAction: "manipulation" }}
             >
-              <Send className="w-4 h-4" />
+              {sending ? (
+                <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
             </motion.button>
           </motion.div>
           <p className="text-[10px] text-center text-gray-300 mt-2 mb-0.5 select-none">Secured by Avici · Your data is protected</p>
@@ -652,7 +740,7 @@ export function UserChat({ conversation: initial }: { conversation: Conversation
   );
 }
 
-function ChatBubble({ message: msg, isFresh = false, gif }: { message: Message; isFresh?: boolean; gif?: string }) {
+function ChatBubble({ message: msg, isFresh = false }: { message: Message; isFresh?: boolean }) {
   const isUser = msg.senderType === "USER";
   const isAgent = msg.senderType === "AGENT";
 
@@ -694,28 +782,59 @@ function ChatBubble({ message: msg, isFresh = false, gif }: { message: Message; 
         className={cn("flex items-end gap-2 max-w-[82%]", isUser && "flex-row-reverse")}
       >
         {!isUser && (
-          <img
-            src={gif}
-            alt={isAgent ? "Agent" : "Avi"}
-            className="w-8 h-8 rounded-full shrink-0 object-cover"
-          />
+          <div className={cn(
+            "w-7 h-7 rounded-full flex items-center justify-center shrink-0",
+            isAgent ? "bg-blue-600" : "bg-gray-900"
+          )}>
+            {isAgent ? <User className="w-3.5 h-3.5 text-white" /> : <Bot className="w-3.5 h-3.5 text-white" />}
+          </div>
         )}
 
         <div
           className={cn(
-            "px-4 py-[11px] rounded-2xl",
+            "rounded-2xl overflow-hidden",
+            msg.media && !msg.content ? "p-0" : "px-4 py-[11px]",
             isUser
-              ? "text-white rounded-br-sm"
+              ? "bg-[#0f0f0f] text-white rounded-br-sm"
               : isAgent
               ? "bg-blue-50 border border-blue-100 text-gray-900 rounded-bl-sm shadow-sm"
               : "bg-white border border-gray-100 text-gray-900 rounded-bl-sm shadow-sm"
           )}
-          style={isUser ? { backgroundColor: "lab(75 -39.57 -11.86)" } : undefined}
         >
           {isAgent && msg.agent?.name && (
             <p className="text-[11px] font-semibold text-blue-500 mb-1">{msg.agent.name}</p>
           )}
-          <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
+
+          {/* Media (image or video) */}
+          {msg.media && (
+            msg.media.mimeType.startsWith("video/") ? (
+              <div className={cn("relative", msg.content && "mb-2")}>
+                <video
+                  src={msg.media.url}
+                  controls
+                  playsInline
+                  className="rounded-xl max-w-[220px] max-h-[300px] object-cover"
+                  style={{ display: "block" }}
+                />
+              </div>
+            ) : (
+              <div className={cn("relative", msg.content && "mb-2")}>
+                <img
+                  src={msg.media.url}
+                  alt={msg.media.fileName}
+                  className="rounded-xl max-w-[220px] max-h-[300px] object-cover"
+                  style={{ display: "block" }}
+                  loading="lazy"
+                />
+              </div>
+            )
+          )}
+
+          {msg.content ? (
+            <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
+          ) : !msg.media ? (
+            <p className="text-[15px] italic opacity-50">📎 Attachment</p>
+          ) : null}
         </div>
       </motion.div>
     </motion.div>

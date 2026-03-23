@@ -35,7 +35,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     limit = 50,
   } = filters;
 
-  const where: Prisma.ConversationWhereInput = {};
+  const where: Prisma.ConversationWhereInput = { lastMessageAt: { not: null } };
 
   if (status) {
     where.status = Array.isArray(status) ? { in: status } : status;
@@ -99,6 +99,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
         assignedAgent: { select: { id: true, name: true, avatarUrl: true } },
         tags: { include: { definition: true } },
         messages: {
+          where: { content: { not: "" } },
           orderBy: { createdAt: "desc" },
           take: 1,
           select: { content: true, senderType: true, createdAt: true },
@@ -116,6 +117,17 @@ export async function getConversations(filters: ConversationFilters = {}) {
 }
 
 export async function getConversationById(id: string) {
+  // Clean up messages stuck as streaming (WS server crash mid-response)
+  // Any message still streaming after 5 minutes is considered abandoned
+  await prisma.message.updateMany({
+    where: {
+      conversationId: id,
+      isStreaming: true,
+      createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
+    },
+    data: { isStreaming: false },
+  });
+
   return prisma.conversation.findUnique({
     where: { id },
     include: {
@@ -123,10 +135,10 @@ export async function getConversationById(id: string) {
       assignedAgent: { select: { id: true, name: true, avatarUrl: true, email: true } },
       tags: { include: { definition: true } },
       messages: {
-        where: { isStreaming: false },
         orderBy: { createdAt: "asc" },
         include: {
           agent: { select: { id: true, name: true, avatarUrl: true } },
+          media: true,
         },
       },
       ticket: true,

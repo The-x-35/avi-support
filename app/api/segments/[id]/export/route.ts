@@ -2,6 +2,10 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { exportSegmentCsv } from "@/lib/services/segments";
 import { prisma } from "@/lib/db/prisma";
+import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+
+// CSV exports are heavy — 5 per agent per minute
+const limiter = createRateLimiter({ limit: 5, windowMs: 60_000 });
 
 export async function GET(
   request: NextRequest,
@@ -9,6 +13,8 @@ export async function GET(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
+
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
   const segment = await prisma.segment.findUnique({ where: { id } });

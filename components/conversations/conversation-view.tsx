@@ -9,6 +9,13 @@ import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/util
 import { Bot, User, ChevronLeft, Pause, Play, UserCheck, ArrowRight, Send } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
+interface MediaMeta {
+  id: string;
+  url: string;
+  mimeType: string;
+  fileName: string;
+}
+
 interface Message {
   id: string;
   senderType: "USER" | "AI" | "AGENT";
@@ -17,6 +24,7 @@ interface Message {
   isStreaming: boolean;
   createdAt: string;
   agent: { id: string; name: string; avatarUrl: string | null } | null;
+  media?: MediaMeta | null;
 }
 
 interface Tag {
@@ -78,11 +86,15 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   // WebSocket setup
   useEffect(() => {
+    let cancelled = false;
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
 
     ws.onopen = async () => {
+      // Strict Mode mounts twice in dev — if cleanup already ran, close immediately
+      if (cancelled) { ws.close(); return; }
       const token = await getAccessToken();
+      if (cancelled) { ws.close(); return; }
       ws.send(JSON.stringify({ type: "auth", token, role: "agent" }));
       ws.send(JSON.stringify({ type: "join", conversationId: conv.id }));
     };
@@ -106,6 +118,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 isStreaming: false,
                 createdAt: p.createdAt,
                 agent: p.senderName ? { id: p.senderId ?? "", name: p.senderName, avatarUrl: null } : null,
+                media: p.media ?? null,
               },
             ];
           });
@@ -178,10 +191,14 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     ws.onerror = () => {};
 
     return () => {
+      cancelled = true;
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "leave", conversationId: conv.id }));
+        ws.close();
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        // Close it as soon as it connects to avoid "closed before established" error
+        ws.addEventListener("open", () => ws.close(), { once: true });
       }
-      ws.close();
     };
   }, [conv.id]);
 
@@ -543,7 +560,8 @@ function MessageBubble({ message: msg }: { message: Message }) {
 
       <div
         className={cn(
-          "max-w-[70%] rounded-2xl px-4 py-2.5",
+          "max-w-[70%] rounded-2xl overflow-hidden",
+          msg.media && !msg.content ? "p-0" : "px-4 py-2.5",
           isUser
             ? "bg-gray-900 text-white rounded-br-sm"
             : isAI
@@ -556,18 +574,41 @@ function MessageBubble({ message: msg }: { message: Message }) {
             {msg.agent.name}
           </p>
         )}
-        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-          {msg.content}
-          {msg.isStreaming && (
-            <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse" />
-          )}
-        </p>
-        <p
-          className={cn(
-            "text-[10px] mt-1",
-            isUser ? "text-gray-400" : "text-gray-400"
-          )}
-        >
+
+        {msg.media && (
+          msg.media.mimeType.startsWith("video/") ? (
+            <div className={cn(msg.content && "mb-2")}>
+              <video
+                src={msg.media.url}
+                controls
+                playsInline
+                className="rounded-xl max-w-[260px] max-h-[300px] object-cover block"
+              />
+            </div>
+          ) : (
+            <div className={cn(msg.content && "mb-2")}>
+              <img
+                src={msg.media.url}
+                alt={msg.media.fileName}
+                className="rounded-xl max-w-[260px] max-h-[300px] object-cover block"
+                loading="lazy"
+              />
+            </div>
+          )
+        )}
+
+        {msg.content ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+            {msg.content}
+            {msg.isStreaming && (
+              <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse" />
+            )}
+          </p>
+        ) : !msg.media ? (
+          <p className="text-sm italic opacity-50">📎 Attachment</p>
+        ) : null}
+
+        <p className="text-[10px] mt-1 text-gray-400">
           {formatMessageTime(msg.createdAt)}
         </p>
       </div>

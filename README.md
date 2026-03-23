@@ -140,6 +140,19 @@ Open [http://localhost:3000](http://localhost:3000)
 - `control` — control state change
 - `tag_update` — AI re-classified conversation
 
+## Chat Screen Effects
+
+When a user sends certain messages in the chat screen, a full-screen effect fires automatically.
+
+| Effect | What it looks like | Trigger phrases |
+|--------|-------------------|----------------|
+| 🎊 **Confetti** | Dark saturated burst exploding upward | "it worked", "that fixed it", "working now", "problem solved", "fixed it", "all good now", "thank you", "thanks", "appreciate", "grateful" |
+| 🎆 **Fireworks** | Real rockets launching and exploding | "finally", "you saved me", "lifesaver", "yes!", "perfect!" |
+| ❤️ **Hearts** | Heart shapes bursting from all sides of the screen | "you're the best", "love this", "amazing support", "you're amazing", "best support" |
+| 🔴 **Lasers** | iMessage-style neon laser beams sweeping L↔R | "pew pew" |
+
+Matching is case-insensitive and substring-based — e.g. "thanks so much" triggers balloons.
+
 ## Auth Flow
 
 1. `/api/auth/google` → redirects to Google OAuth

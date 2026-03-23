@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(ls:*)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "WebSearch",
+      "WebFetch(domain:codepen.io)",
+      "WebFetch(domain:samuelkraft.com)",
+      "WebFetch(domain:blog.maximeheckel.com)",
+      "WebFetch(domain:www.framer.com)",
+      "WebFetch(domain:refine.dev)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:blog.logrocket.com)"
     ]
   }
 }

@@ -134,6 +134,33 @@ function leaveAllRooms(ws: WebSocket) {
   }
 }
 
+// ─── Wait Message (when AI is disabled workspace-wide) ────────────────────────
+
+async function handleWaitMessage(conversationId: string) {
+  try {
+    const content = "Please wait — we're connecting you with our team to help resolve your issue. Someone will be with you shortly.";
+    const msg = await prisma.message.create({
+      data: { conversationId, senderType: "AI", content, isStreaming: false },
+    });
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lastMessageAt: new Date() },
+    });
+    broadcast(conversationId, {
+      type: "message",
+      payload: {
+        id: msg.id,
+        conversationId,
+        senderType: "AI",
+        content,
+        createdAt: msg.createdAt.toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("[ws] wait message error:", err);
+  }
+}
+
 // ─── AI Response Handler ──────────────────────────────────────────────────────
 
 async function handleAiResponse(conversationId: string) {
@@ -420,7 +447,14 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Trigger AI response if not paused and message is from user
       if (senderType === "USER" && !conversation.isAiPaused) {
-        handleAiResponse(conversationId);
+        const ws_setting = await prisma.workspaceSetting.findUnique({ where: { id: "default" } });
+        const aiEnabled = ws_setting?.aiEnabled ?? true;
+        if (aiEnabled) {
+          handleAiResponse(conversationId);
+        } else {
+          // AI is disabled — send a "please wait" auto-message
+          handleWaitMessage(conversationId);
+        }
       }
 
       if (event.ref) {

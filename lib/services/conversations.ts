@@ -95,7 +95,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     prisma.conversation.findMany({
       where,
       include: {
-        user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        user: { select: { id: true, name: true, email: true, avatarUrl: true, externalId: true } },
         assignedAgent: { select: { id: true, name: true, avatarUrl: true } },
         tags: { include: { definition: true } },
         messages: {

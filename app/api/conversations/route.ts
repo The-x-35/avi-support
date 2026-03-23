@@ -26,7 +26,9 @@ export async function GET(request: NextRequest) {
     isAiPaused: searchParams.has("isAiPaused")
       ? searchParams.get("isAiPaused") === "true"
       : undefined,
-    assignedAgentId: searchParams.get("assignedAgentId") ?? undefined,
+    assignedAgentId: searchParams.has("assignedAgentId")
+      ? (searchParams.get("assignedAgentId") === "null" ? null : searchParams.get("assignedAgentId")!)
+      : undefined,
     userId: searchParams.get("userId") ?? undefined,
     search: searchParams.get("search") ?? undefined,
     tagType: searchParams.get("tagType") ?? undefined,

@@ -7,23 +7,51 @@ datasource db {
 }
 
 model Agent {
-  id             String         @id @default(uuid())
-  email          String         @unique
-  name           String
-  avatarUrl      String?
-  role           Role           @default(AGENT)
-  isActive       Boolean        @default(true)
-  googleId       String?        @unique
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  conversations  Conversation[] @relation("AssignedAgent")
-  messages       Message[]
-  refreshTokens  RefreshToken[]
-  segments       Segment[]
-  createdTickets Ticket[]       @relation("CreatedTickets")
+  id              String           @id @default(uuid())
+  email           String           @unique
+  name            String
+  avatarUrl       String?
+  role            Role             @default(AGENT)
+  isActive        Boolean          @default(true)
+  googleId        String?          @unique
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  conversations   Conversation[]   @relation("AssignedAgent")
+  messages        Message[]
+  refreshTokens   RefreshToken[]
+  segments        Segment[]
+  createdTickets  Ticket[]         @relation("CreatedTickets")
+  cannedResponses CannedResponse[]
+  notes           Note[]
 
   @@index([email])
   @@index([googleId])
+}
+
+model CannedResponse {
+  id        String   @id @default(uuid())
+  agentId   String
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+}
+
+model Note {
+  id             String       @id @default(uuid())
+  conversationId String
+  agentId        String
+  content        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([agentId])
 }
 
 model RefreshToken {
@@ -73,6 +101,7 @@ model Conversation {
   user            EndUser            @relation(fields: [userId], references: [id])
   messages        Message[]
   tags            Tag[]
+  notes           Note[]
 
   @@index([userId])
   @@index([status])
@@ -171,6 +200,12 @@ model Ticket {
   @@index([status])
   @@index([createdById])
   @@index([assignedAgentId])
+}
+
+model WorkspaceSetting {
+  id        String   @id @default("default")
+  aiEnabled Boolean  @default(true)
+  updatedAt DateTime @updatedAt
 }
 
 enum Role {

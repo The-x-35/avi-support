@@ -16,9 +16,11 @@ const sizes = {
 
 function getInitials(name?: string | null): string {
   if (!name) return "?";
-  const parts = name.trim().split(" ");
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  const parts = trimmed.split(/[\s_\-]+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return trimmed.slice(0, 2).toUpperCase();
 }
 
 function getColor(name?: string | null): string {

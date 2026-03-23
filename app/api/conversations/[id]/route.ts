@@ -6,6 +6,7 @@ import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
 
 const VALID_STATUSES = new Set(["OPEN", "PENDING", "RESOLVED", "ESCALATED", "CLOSED"]);
 const VALID_PRIORITIES = new Set(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
 
 // 120 reads, 30 writes per agent per minute
 const readLimiter = createRateLimiter({ limit: 120, windowMs: 60_000 });
@@ -45,6 +46,7 @@ export async function PATCH(
   const data: Record<string, unknown> = {};
   if (body.status && VALID_STATUSES.has(body.status)) data.status = body.status;
   if (body.priority && VALID_PRIORITIES.has(body.priority)) data.priority = body.priority;
+  if (body.category && VALID_CATEGORIES.has(body.category)) data.category = body.category;
   if (body.assignedAgentId !== undefined) data.assignedAgentId = body.assignedAgentId ?? null;
 
   if (Object.keys(data).length === 0) {

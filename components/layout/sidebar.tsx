@@ -6,9 +6,7 @@ import { cn } from "@/lib/utils/cn";
 import {
   LayoutDashboard,
   Radio,
-  Clock,
   BarChart2,
-  Users,
   Filter,
   Settings,
   LogOut,
@@ -19,7 +17,6 @@ import { Avatar } from "@/components/ui/avatar";
 const nav = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/live", label: "Live Feed", icon: Radio },
-  { href: "/queue", label: "Queue", icon: Clock },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/segments", label: "Segments", icon: Filter },
 ];

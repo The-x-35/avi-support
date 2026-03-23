@@ -5,6 +5,8 @@ import { Header } from "@/components/layout/header";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { AdminPanel } from "./admin-panel";
+import { CannedResponsesSettings } from "./canned-responses";
+import { AIToggle } from "./ai-toggle";
 
 export default async function SettingsPage() {
   const session = await getSession();
@@ -15,6 +17,12 @@ export default async function SettingsPage() {
   });
 
   const isAdmin = session?.role === "ADMIN";
+
+  const workspaceSetting = await prisma.workspaceSetting.upsert({
+    where: { id: "default" },
+    create: { id: "default", aiEnabled: true },
+    update: {},
+  });
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -41,6 +49,8 @@ export default async function SettingsPage() {
           </div>
         </div>
 
+        <CannedResponsesSettings />
+        <AIToggle initialEnabled={workspaceSetting.aiEnabled} isAdmin={isAdmin} />
         {isAdmin && <AdminPanel agents={agents} currentAgentId={session?.agentId ?? ""} />}
       </div>
     </div>

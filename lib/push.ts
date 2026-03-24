@@ -1,11 +1,17 @@
 import webpush from "web-push";
 import { prisma } from "./db/prisma";
 
-webpush.setVapidDetails(
-  process.env.VAPID_SUBJECT ?? "mailto:support@avici.club",
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "",
-  process.env.VAPID_PRIVATE_KEY ?? ""
-);
+function initVapid() {
+  const pub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+  const priv = process.env.VAPID_PRIVATE_KEY;
+  if (!pub || !priv) return false;
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT ?? "mailto:support@avici.club",
+    pub,
+    priv
+  );
+  return true;
+}
 
 export interface PushPayload {
   title: string;
@@ -15,6 +21,7 @@ export interface PushPayload {
 }
 
 export async function sendPushToAgent(agentId: string, payload: PushPayload) {
+  if (!initVapid()) return; // skip if VAPID keys not configured
   const subs = await prisma.pushSubscription.findMany({ where: { agentId } });
   if (!subs.length) return;
 

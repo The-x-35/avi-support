@@ -373,6 +373,8 @@ export function UserChat({
       if (cancelled) { ws.close(); return; }
       ws.send(JSON.stringify({ type: "auth", token: userId, role: "user" }));
       ws.send(JSON.stringify({ type: "join", conversationId: initial.id }));
+      // Mark existing messages as read on open
+      ws.send(JSON.stringify({ type: "mark_read", conversationId: initial.id }));
       setWsReady(true);
       setWsError(false);
       const firstMessage = initialMessageFromUrl;
@@ -387,7 +389,7 @@ export function UserChat({
       switch (evt.type) {
         case "message": {
           const p = evt.payload;
-          if (p.conversationId !== initial.id || p.senderType === "USER") return;
+          if (p.conversationId !== initial.id || p.senderType === "USER" || p.isPrivate) return;
           setMessages((prev) => {
             if (prev.some((m) => m.id === p.id)) return prev;
             return [...prev, {
@@ -397,6 +399,10 @@ export function UserChat({
               media: p.media ?? undefined,
             }];
           });
+          // Mark as read since it's visible
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "mark_read", conversationId: initial.id }));
+          }
           break;
         }
         case "ai_chunk": {
@@ -421,6 +427,12 @@ export function UserChat({
           if (p.action === "resume_ai" || p.action === "release") setIsAgentActive(false);
           if (p.action === "resolve") setConvStatus("RESOLVED");
           if (p.action === "escalate") setConvStatus("ESCALATED");
+          break;
+        }
+        case "category_update": {
+          const p = evt.payload;
+          if (p.conversationId !== initial.id) return;
+          setConvCategory(p.category);
           break;
         }
       }
@@ -515,6 +527,10 @@ export function UserChat({
       setText("");
       animateInput(inputScope.current, { scaleY: 1, opacity: 1 }, { duration: 0.18, ease: [0.34, 1.56, 0.64, 1] });
     });
+    // Clear typing preview for agents
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "typing_preview", conversationId: initial.id, text: "" }));
+    }
 
     setFreshIds((prev) => new Set([...prev, tempId]));
     setMessages((prev) => [...prev, {
@@ -981,7 +997,12 @@ export function UserChat({
             <textarea
               ref={inputRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({ type: "typing_preview", conversationId: initial.id, text: e.target.value }));
+                }
+              }}
               onKeyDown={handleKeyDown}
               placeholder={wsReady ? "Talk to Avi…" : "Connecting…"}
               disabled={!wsReady}

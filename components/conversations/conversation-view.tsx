@@ -6,7 +6,43 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge, SentimentBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock, EyeOff, Paperclip, Bold, Italic, Underline } from "lucide-react";
+import imageCompression from "browser-image-compression";
+
+// ─── Media upload ─────────────────────────────────────────────────────────────
+const ALLOWED_MIME = new Set([
+  "image/jpeg","image/png","image/gif","image/webp","image/heic","image/heif",
+  "video/mp4","video/quicktime","video/webm","video/x-m4v",
+]);
+const ALLOWED_EXT = new Set(["jpg","jpeg","png","gif","webp","heic","heif","mp4","mov","webm","m4v"]);
+const MAX_IMAGE = 10 * 1024 * 1024;
+const MAX_VIDEO = 50 * 1024 * 1024;
+
+interface PendingMedia {
+  file: File;
+  previewUrl: string;
+  isVideo: boolean;
+}
+
+async function uploadMedia(file: File, conversationId: string) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("conversationId", conversationId);
+  const res = await fetch("/api/upload/file", { method: "POST", body: form });
+  if (!res.ok) throw new Error("Upload failed");
+  return res.json() as Promise<{ url: string; mediaId: string; mimeType: string; fileName: string }>;
+}
+
+// ─── Inline text formatter ─────────────────────────────────────────────────────
+function renderFormatted(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|__[^_\n]+__)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={i}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("*") && part.endsWith("*")) return <em key={i}>{part.slice(1, -1)}</em>;
+    if (part.startsWith("__") && part.endsWith("__")) return <u key={i}>{part.slice(2, -2)}</u>;
+    return part;
+  });
+}
 import { cn } from "@/lib/utils/cn";
 
 interface MediaMeta {
@@ -22,6 +58,7 @@ interface Message {
   senderId: string | null;
   content: string;
   isStreaming: boolean;
+  isPrivate: boolean;
   createdAt: string;
   agent: { id: string; name: string; avatarUrl: string | null } | null;
   media?: MediaMeta | null;
@@ -43,6 +80,7 @@ interface Conversation {
   assignedAgentId: string | null;
   createdAt: string;
   lastMessageAt: string | null;
+  lastReadByUserAt: string | null;
   user: {
     id: string;
     name: string | null;
@@ -54,6 +92,15 @@ interface Conversation {
   assignedAgent: { id: string; name: string; avatarUrl: string | null; email: string } | null;
   messages: Message[];
   tags: Tag[];
+}
+
+interface ConvSummary {
+  id: string;
+  status: string;
+  category: string;
+  lastMessageAt: string | null;
+  user: { id: string; name: string | null; email: string | null; avatarUrl: string | null; externalId: string };
+  messages: Array<{ content: string; senderType: string }>;
 }
 
 interface UserHistoryItem {
@@ -97,11 +144,18 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
 export function ConversationView({ conversation: initial, currentAgentId }: ConversationViewProps) {
   const [conv, setConv] = useState(initial);
-  const [messages, setMessages] = useState<Message[]>(initial.messages);
+  const [messages, setMessages] = useState<Message[]>(
+    initial.messages.map((m) => ({ ...m, isPrivate: (m as Message & { isPrivate?: boolean }).isPrivate ?? false }))
+  );
   const [streamingMsg, setStreamingMsg] = useState<{ id: string; content: string } | null>(null);
   const [typingAgent, setTypingAgent] = useState(false);
+  const [userTypingText, setUserTypingText] = useState<string>("");
+  const [lastReadByUserAt, setLastReadByUserAt] = useState<string | null>(initial.lastReadByUserAt ?? null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [userHistory, setUserHistory] = useState<UserHistoryItem[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -128,11 +182,21 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed, "" = show all
   const [slashIndex, setSlashIndex] = useState(0);
 
+  // Private message toggle
+  const [privateMode, setPrivateMode] = useState(false);
+
+  // Sidebar conversations
+  const [sidebarConvs, setSidebarConvs] = useState<ConvSummary[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [switchingConv, setSwitchingConv] = useState(false);
+
   // Notes
   const [notes, setNotes] = useState<{ id: string; content: string; createdAt: string; agent: { id: string; name: string; avatarUrl: string | null } }[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+
+  const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -181,6 +245,14 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       .catch(() => {});
   }, []);
 
+  // Fetch sidebar conversations
+  useEffect(() => {
+    fetch("/api/conversations?limit=50")
+      .then((r) => r.json())
+      .then((d) => setSidebarConvs(d.conversations ?? []))
+      .catch(() => {});
+  }, []);
+
   // Fetch notes for this conversation
   useEffect(() => {
     setNotesLoading(true);
@@ -224,6 +296,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 senderId: p.senderId ?? null,
                 content: p.content,
                 isStreaming: false,
+                isPrivate: p.isPrivate ?? false,
                 createdAt: p.createdAt,
                 agent: p.senderName ? { id: p.senderId ?? "", name: p.senderName, avatarUrl: null } : null,
                 media: p.media ?? null,
@@ -253,10 +326,11 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   ...prev,
                   {
                     id: sm.id,
-                    senderType: "AI",
+                    senderType: "AI" as const,
                     senderId: null,
                     content: sm.content,
                     isStreaming: false,
+                    isPrivate: false,
                     createdAt: new Date().toISOString(),
                     agent: null,
                   },
@@ -302,6 +376,28 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           const p = evt.payload;
           if (p.conversationId !== conv.id) return;
           setConv((c) => ({ ...c, tags: p.tags }));
+          break;
+        }
+        case "typing_preview": {
+          const p = evt.payload;
+          if (p.conversationId !== conv.id) return;
+          setUserTypingText(p.text ?? "");
+          break;
+        }
+        case "read_receipt": {
+          const p = evt.payload;
+          if (p.conversationId !== conv.id) return;
+          setLastReadByUserAt(p.readAt);
+          break;
+        }
+        case "notification": {
+          const p = evt.payload;
+          if (p.type === "NEW_MESSAGE" && p.conversationId && p.conversationId !== conv.id) {
+            setUnreadCounts((prev) => ({
+              ...prev,
+              [p.conversationId]: (prev[p.conversationId] ?? 0) + 1,
+            }));
+          }
           break;
         }
       }
@@ -466,17 +562,111 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     await fetch(`/api/conversations/${conv.id}/notes?noteId=${noteId}`, { method: "DELETE" });
   }
 
-  function sendReply() {
-    if (!replyText.trim() || sending || wsRef.current?.readyState !== WebSocket.OPEN) return;
+  async function switchConversation(id: string) {
+    if (id === conv.id || switchingConv) return;
+    setSwitchingConv(true);
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      // Reset per-conversation state
+      setConv(data);
+      setMessages((data.messages ?? []).map((m: Message) => ({ ...m, isPrivate: m.isPrivate ?? false })));
+      setStreamingMsg(null);
+      setTypingAgent(false);
+      setUserTypingText("");
+      setLastReadByUserAt(data.lastReadByUserAt ?? null);
+      setReplyText("");
+      setPrivateMode(false);
+      clearMedia();
+      setHistoryDetail(null);
+      setEditOpen(null);
+      setUnreadCounts((p) => { const n = { ...p }; delete n[id]; return n; });
+      // Update URL without full navigation
+      window.history.pushState(null, "", `/conversations/${id}`);
+    } finally {
+      setSwitchingConv(false);
+    }
+  }
+
+  async function handleFilePick(file: File) {
+    setUploadError(null);
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!ALLOWED_EXT.has(ext) || !ALLOWED_MIME.has(file.type)) {
+      setUploadError("Only images (jpg, png, gif, webp) and videos (mp4, mov, webm) are allowed.");
+      return;
+    }
+    const isVideo = file.type.startsWith("video/");
+    if (file.size > (isVideo ? MAX_VIDEO : MAX_IMAGE)) {
+      setUploadError(`${isVideo ? "Video" : "Image"} too large. Max ${isVideo ? 50 : 10}MB.`);
+      return;
+    }
+    let finalFile = file;
+    if (!isVideo) {
+      try {
+        const compressed = await imageCompression(file, { maxSizeMB: 2, maxWidthOrHeight: 1920, useWebWorker: true });
+        finalFile = new File([compressed], file.name, { type: compressed.type || file.type });
+      } catch { /* use original */ }
+    }
+    setPendingMedia({ file: finalFile, previewUrl: URL.createObjectURL(finalFile), isVideo });
+  }
+
+  function clearMedia() {
+    if (pendingMedia) URL.revokeObjectURL(pendingMedia.previewUrl);
+    setPendingMedia(null);
+    setUploadError(null);
+  }
+
+  function wrapFormat(marker: string) {
+    const el = inputRef.current;
+    if (!el) return;
+    const { selectionStart: s, selectionEnd: e, value } = el;
+    const selected = value.slice(s, e);
+    const wrapped = marker + (selected || "text") + marker;
+    const newVal = value.slice(0, s) + wrapped + value.slice(e);
+    setReplyText(newVal);
+    setTimeout(() => {
+      el.focus();
+      const pos = selected ? s + wrapped.length : s + marker.length + 4;
+      el.setSelectionRange(pos, pos);
+    }, 0);
+  }
+
+  async function sendReply() {
+    if ((!replyText.trim() && !pendingMedia) || sending || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    setSending(true);
+    setUploadError(null);
+
+    let mediaId: string | undefined;
+    if (pendingMedia) {
+      try {
+        const uploaded = await uploadMedia(pendingMedia.file, conv.id);
+        mediaId = uploaded.mediaId;
+        clearMedia();
+      } catch {
+        setUploadError("Upload failed. Please try again.");
+        setSending(false);
+        return;
+      }
+    }
 
     const content = replyText.trim();
     setReplyText("");
 
     wsRef.current.send(
-      JSON.stringify({ type: "send_message", conversationId: conv.id, content })
+      JSON.stringify({ type: "send_message", conversationId: conv.id, content, ...(mediaId ? { mediaId } : {}), ...(privateMode ? { isPrivate: true } : {}) })
     );
+    if (privateMode) setPrivateMode(false);
+    setSending(false);
 
     inputRef.current?.focus();
+  }
+
+  async function sendWithStatus(status: string) {
+    setSendDropdownOpen(false);
+    await sendReply();
+    await patchConv({ status });
+    setConv((c) => ({ ...c, status }));
   }
 
   function handleTyping() {
@@ -552,7 +742,65 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   return (
     <div className="flex h-full overflow-hidden">
+      {/* Left sidebar — all conversations */}
+      <div className="w-64 shrink-0 border-r border-gray-100 bg-white flex flex-col overflow-hidden">
+        <div className="h-14 px-4 flex items-center border-b border-gray-100">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Conversations</span>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {(() => {
+            // Deduplicate: one row per user, their most recent conversation
+            const seenUsers = new Set<string>();
+            const deduped: ConvSummary[] = [];
+            for (const c of sidebarConvs) {
+              if (!seenUsers.has(c.user.id)) {
+                seenUsers.add(c.user.id);
+                deduped.push(c);
+              }
+            }
+            return deduped;
+          })().map((c) => {
+            const isActive = c.id === conv.id;
+            const unread = unreadCounts[c.id] ?? 0;
+            const lastMsg = c.messages[0];
+            return (
+              <button
+                key={c.id}
+                onClick={() => switchConversation(c.id)}
+                className={cn(
+                  "w-full text-left block px-3 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors",
+                  isActive && "bg-blue-50"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <Avatar name={c.user.name ?? c.user.externalId} src={c.user.avatarUrl} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-medium text-gray-900 truncate">
+                        {c.user.name ?? c.user.email ?? c.user.externalId}
+                      </span>
+                      {unread > 0 && (
+                        <span className="shrink-0 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      )}
+                    </div>
+                    {lastMsg ? (
+                      <p className="text-[11px] text-gray-400 truncate mt-0.5">{lastMsg.content}</p>
+                    ) : null}
+                    {c.lastMessageAt && (
+                      <p className="text-[10px] text-gray-300 mt-0.5">{formatRelativeTime(c.lastMessageAt)}</p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Main chat area */}
+
       <div className="flex flex-col flex-1 min-w-0 border-r border-gray-100">
         {/* Chat header */}
         <div className="h-14 flex items-center gap-3 px-5 border-b border-gray-100 bg-white shrink-0">
@@ -624,10 +872,37 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 senderId: null,
                 content: streamingMsg.content,
                 isStreaming: true,
+                isPrivate: false,
                 createdAt: new Date().toISOString(),
                 agent: null,
               }}
             />
+          )}
+
+          {/* Read receipt — show under last non-user message the user has seen */}
+          {lastReadByUserAt && (() => {
+            const readAt = new Date(lastReadByUserAt);
+            // Find the last agent/AI message sent before the read timestamp
+            const lastReadMsg = [...messages].reverse().find(
+              (m) => m.senderType !== "USER" && new Date(m.createdAt) <= readAt
+            );
+            return lastReadMsg ? (
+              <div key="read-receipt" className="flex justify-end pr-1">
+                <span className="text-[10px] text-gray-400 italic">Read</span>
+              </div>
+            ) : null;
+          })()}
+
+          {/* Live typing preview from user */}
+          {userTypingText && (
+            <div className="flex items-end gap-2 justify-start">
+              <div className="max-w-[70%] bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-2.5">
+                <p className="text-sm text-gray-500 italic leading-relaxed break-words">
+                  {userTypingText}
+                  <span className="inline-block w-0.5 h-3.5 bg-gray-400 ml-0.5 animate-pulse align-middle" />
+                </p>
+              </div>
+            </div>
           )}
 
           {typingAgent && (
@@ -706,7 +981,91 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               </div>
             )}
 
-            <div className="flex items-center gap-3 bg-gray-50 rounded-xl border border-gray-200 px-3 py-2.5">
+            {/* Media preview */}
+            {pendingMedia && (
+              <div className="relative inline-block mb-1">
+                {pendingMedia.isVideo ? (
+                  <div className="w-20 h-20 rounded-xl bg-gray-900 flex items-center justify-center overflow-hidden relative">
+                    <video src={pendingMedia.previewUrl} className="w-full h-full object-cover" muted playsInline />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-6 h-6 rounded-full bg-black/50 flex items-center justify-center">
+                        <svg className="w-3 h-3 text-white ml-0.5" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <img src={pendingMedia.previewUrl} alt="attachment" className="w-20 h-20 rounded-xl object-cover" />
+                )}
+                <button
+                  onClick={clearMedia}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-900 rounded-full flex items-center justify-center"
+                >
+                  <X className="w-3 h-3 text-white" />
+                </button>
+              </div>
+            )}
+            {uploadError && (
+              <p className="text-xs text-red-500">{uploadError}</p>
+            )}
+
+            {/* Formatting toolbar */}
+            <div className="flex items-center gap-0.5 mb-1">
+              {[
+                { icon: Bold, marker: "**", title: "Bold" },
+                { icon: Italic, marker: "*", title: "Italic" },
+                { icon: Underline, marker: "__", title: "Underline" },
+              ].map(({ icon: Icon, marker, title }) => (
+                <button
+                  key={marker}
+                  type="button"
+                  title={title}
+                  onMouseDown={(e) => { e.preventDefault(); wrapFormat(marker); }}
+                  className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                </button>
+              ))}
+            </div>
+
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif,video/mp4,video/quicktime,video/webm,video/x-m4v"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFilePick(f); e.target.value = ""; }}
+            />
+
+            <div className={cn(
+              "flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors",
+              privateMode
+                ? "bg-orange-50 border-orange-200"
+                : "bg-gray-50 border-gray-200"
+            )}>
+              {/* Attach button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                title="Attach image or video"
+                className="shrink-0 text-gray-300 hover:text-gray-500 disabled:opacity-40 transition-colors"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+
+              {/* Private toggle */}
+              <button
+                type="button"
+                onClick={() => setPrivateMode((v) => !v)}
+                title={privateMode ? "Private message (only agents see this)" : "Send as private message"}
+                className={cn(
+                  "shrink-0 transition-colors",
+                  privateMode ? "text-orange-500 hover:text-orange-700" : "text-gray-300 hover:text-gray-500"
+                )}
+              >
+                <EyeOff className="w-4 h-4" />
+              </button>
+
               <textarea
                 ref={inputRef}
                 value={replyText}
@@ -714,7 +1073,6 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   const val = e.target.value;
                   setReplyText(val);
                   handleTyping();
-                  // Slash command: only trigger if the entire value starts with /
                   if (val.startsWith("/") && !val.includes(" ") && !val.includes("\n")) {
                     setSlashQuery(val.slice(1));
                     setSlashIndex(0);
@@ -723,20 +1081,62 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   }
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="Reply to user… (/ for quick replies, Enter to send)"
-                className="flex-1 resize-none bg-transparent text-sm text-gray-900 placeholder:text-gray-400 outline-none max-h-32"
+                placeholder={privateMode ? "Private message (only agents see this)…" : "Reply to user… (/ for quick replies, Enter to send)"}
+                className={cn(
+                  "flex-1 resize-none bg-transparent text-sm outline-none max-h-32",
+                  privateMode ? "text-orange-900 placeholder:text-orange-300" : "text-gray-900 placeholder:text-gray-400"
+                )}
                 rows={1}
                 style={{ lineHeight: "1.5", minHeight: "1.5rem" }}
               />
-              <Button
-                variant="primary"
-                size="icon"
-                onClick={sendReply}
-                loading={sending}
-                disabled={!replyText.trim()}
-              >
-                <Send className="w-3.5 h-3.5" />
-              </Button>
+              {/* Split send button */}
+              <div className="relative flex items-center shrink-0">
+                <button
+                  onClick={sendReply}
+                  disabled={sending || (!replyText.trim() && !pendingMedia)}
+                  className={cn(
+                    "h-8 px-3 flex items-center gap-1.5 rounded-l-lg text-white text-xs font-medium transition-colors disabled:opacity-40",
+                    privateMode ? "bg-orange-500 hover:bg-orange-600" : "bg-gray-900 hover:bg-gray-700"
+                  )}
+                >
+                  <Send className="w-3 h-3" />
+                  Send
+                </button>
+                <button
+                  onClick={() => setSendDropdownOpen((o) => !o)}
+                  disabled={sending || (!replyText.trim() && !pendingMedia)}
+                  className={cn(
+                    "h-8 w-6 flex items-center justify-center rounded-r-lg border-l text-white transition-colors disabled:opacity-40",
+                    privateMode
+                      ? "bg-orange-500 hover:bg-orange-600 border-orange-400"
+                      : "bg-gray-900 hover:bg-gray-700 border-gray-700"
+                  )}
+                >
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+
+                {sendDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setSendDropdownOpen(false)} />
+                    <div className="absolute bottom-full right-0 mb-1.5 w-44 bg-white border border-gray-100 rounded-xl shadow-xl z-20 overflow-hidden">
+                      {[
+                        { label: "Send & Resolve", status: "RESOLVED" },
+                        { label: "Send & Close",   status: "CLOSED" },
+                        { label: "Send & Pending",  status: "PENDING" },
+                        { label: "Send & Escalate", status: "ESCALATED" },
+                      ].map(({ label, status }) => (
+                        <button
+                          key={status}
+                          onClick={() => sendWithStatus(status)}
+                          className="w-full text-left px-3.5 py-2.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1014,7 +1414,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
         <div className="p-5 border-b border-gray-100">
           <div className="flex items-center gap-1.5 mb-3">
             <Lock className="w-3 h-3 text-gray-400" />
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Private Notes</h3>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</h3>
           </div>
 
           {notesLoading ? (
@@ -1167,16 +1567,17 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                     <p className="text-xs text-gray-300 italic text-center pt-8">No messages</p>
                   ) : (
                     historyDetail.messages.map((msg) => {
+                      const isAgent = msg.senderType === "AGENT";
                       const isUser = msg.senderType === "USER";
                       return (
-                        <div key={msg.id} className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+                        <div key={msg.id} className={cn("flex", isAgent ? "justify-end" : "justify-start")}>
                           <div
                             className={cn(
                               "max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed break-words",
                               isUser
+                                ? "bg-gray-100 text-gray-900 rounded-bl-sm"
+                                : isAgent
                                 ? "bg-gray-900 text-white rounded-br-sm"
-                                : msg.senderType === "AGENT"
-                                ? "bg-blue-50 border border-blue-100 text-gray-900 rounded-bl-sm"
                                 : "bg-white border border-gray-100 text-gray-900 rounded-bl-sm"
                             )}
                           >
@@ -1289,26 +1690,19 @@ function MessageBubble({ message: msg }: { message: Message }) {
   const isUser = msg.senderType === "USER";
   const isAI = msg.senderType === "AI";
   const isAgent = msg.senderType === "AGENT";
+  const isPrivate = msg.isPrivate;
 
   return (
     <div
       className={cn(
         "flex items-end gap-2",
-        isUser ? "justify-end" : "justify-start"
+        isUser ? "justify-start" : "justify-end"
       )}
     >
-      {!isUser && (
-        <div
-          className={cn(
-            "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
-            isAI ? "bg-gray-900" : "bg-blue-500"
-          )}
-        >
-          {isAI ? (
-            <Bot className="w-3.5 h-3.5 text-white" />
-          ) : (
-            <User className="w-3.5 h-3.5 text-white" />
-          )}
+      {/* Left avatar for user messages only */}
+      {isUser && (
+        <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center shrink-0">
+          <User className="w-3.5 h-3.5 text-white" />
         </div>
       )}
 
@@ -1317,16 +1711,28 @@ function MessageBubble({ message: msg }: { message: Message }) {
           "max-w-[70%] rounded-2xl overflow-hidden",
           msg.media && !msg.content ? "p-0" : "px-4 py-2.5",
           isUser
-            ? "bg-gray-900 text-white rounded-br-sm"
+            ? "bg-white border border-gray-200 text-gray-900 rounded-bl-sm"
             : isAI
-            ? "bg-white border border-gray-100 text-gray-900 rounded-bl-sm"
-            : "bg-blue-50 border border-blue-100 text-gray-900 rounded-bl-sm"
+            ? "bg-gray-100 text-gray-600 rounded-br-sm"
+            : isPrivate
+            ? "bg-orange-50 border border-orange-200 text-gray-900 rounded-br-sm"
+            : "bg-gray-900 text-white rounded-br-sm"
         )}
       >
-        {isAgent && msg.agent && (
-          <p className="text-[10px] font-semibold text-blue-600 mb-1">
-            {msg.agent.name}
-          </p>
+        {isAgent && (
+          <div className="flex items-center gap-1 mb-1">
+            {msg.agent && (
+              <p className={cn("text-[10px] font-semibold", isPrivate ? "text-orange-600" : "text-gray-300")}>
+                {msg.agent.name}
+              </p>
+            )}
+            {isPrivate && (
+              <span className="flex items-center gap-0.5 text-[10px] text-orange-500 font-medium">
+                <EyeOff className="w-2.5 h-2.5" />
+                Private
+              </span>
+            )}
+          </div>
         )}
 
         {msg.media && (
@@ -1353,7 +1759,7 @@ function MessageBubble({ message: msg }: { message: Message }) {
 
         {msg.content ? (
           <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-            {msg.content}
+            {renderFormatted(msg.content)}
             {msg.isStreaming && (
               <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse" />
             )}
@@ -1362,7 +1768,7 @@ function MessageBubble({ message: msg }: { message: Message }) {
           <p className="text-sm italic opacity-50">📎 Attachment</p>
         ) : null}
 
-        <p className="text-[10px] mt-1 text-gray-400">
+        <p className={cn("text-[10px] mt-1", isAgent && !isPrivate ? "text-gray-400 opacity-50" : "text-gray-400")}>
           {formatMessageTime(msg.createdAt)}
         </p>
       </div>

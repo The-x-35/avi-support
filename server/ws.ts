@@ -13,6 +13,8 @@ import { verifyAccessToken } from "../lib/auth/jwt";
 import { prisma } from "../lib/db/prisma";
 import { getAIProvider } from "../lib/ai";
 import type { ConversationContext } from "../lib/ai/types";
+import { guessCategory } from "../lib/auto-tagger";
+import { createNotifications } from "../lib/notifications";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,10 +33,23 @@ type ServerEvent =
   | { type: "ai_chunk"; payload: AiChunkPayload }
   | { type: "ai_done"; payload: { conversationId: string; messageId: string } }
   | { type: "typing"; payload: TypingPayload }
+  | { type: "typing_preview"; payload: { conversationId: string; text: string } }
+  | { type: "read_receipt"; payload: { conversationId: string; readAt: string } }
   | { type: "control"; payload: ControlPayload }
   | { type: "tag_update"; payload: { conversationId: string; tags: unknown[] } }
+  | { type: "category_update"; payload: { conversationId: string; category: string } }
+  | { type: "notification"; payload: NotificationPayload }
   | { type: "error"; payload: { code: string; message: string } }
   | { type: "ack"; payload: { ref: string } };
+
+interface NotificationPayload {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  conversationId?: string;
+  createdAt: string;
+}
 
 interface MediaMeta {
   url: string;
@@ -46,8 +61,10 @@ type ClientEvent =
   | { type: "auth"; token: string; role: ClientRole; ref?: string }
   | { type: "join"; conversationId: string; ref?: string }
   | { type: "leave"; conversationId: string; ref?: string }
-  | { type: "send_message"; conversationId: string; content: string; mediaId?: string; ref?: string }
+  | { type: "send_message"; conversationId: string; content: string; mediaId?: string; isPrivate?: boolean; ref?: string }
   | { type: "typing"; conversationId: string; isTyping: boolean }
+  | { type: "typing_preview"; conversationId: string; text: string }
+  | { type: "mark_read"; conversationId: string }
   | { type: "control"; conversationId: string; action: "pause_ai" | "resume_ai" | "takeover" | "release" | "resolve" | "escalate" };
 
 interface MessagePayload {
@@ -59,6 +76,7 @@ interface MessagePayload {
   createdAt: string;
   senderName?: string;
   media?: MediaMeta;
+  isPrivate?: boolean;
 }
 
 interface AiChunkPayload {
@@ -85,6 +103,8 @@ interface ControlPayload {
 const clients = new Map<WebSocket, AuthenticatedClient>();
 // conversationId → Set of WebSocket clients
 const rooms = new Map<string, Set<WebSocket>>();
+// agentId → Set of WebSocket connections (personal notification room)
+const agentRooms = new Map<string, Set<WebSocket>>();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -95,6 +115,20 @@ function broadcast(conversationId: string, event: ServerEvent, exclude?: WebSock
   const data = JSON.stringify(event);
   for (const ws of room) {
     if (ws !== exclude && ws.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  }
+}
+
+// Only deliver to agent connections in a room (for private messages)
+function broadcastAgentsOnly(conversationId: string, event: ServerEvent) {
+  const room = rooms.get(conversationId);
+  if (!room) return;
+
+  const data = JSON.stringify(event);
+  for (const ws of room) {
+    const c = clients.get(ws);
+    if (c?.role === "agent" && ws.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
   }
@@ -134,11 +168,57 @@ function leaveAllRooms(ws: WebSocket) {
   }
 }
 
+function joinAgentRoom(ws: WebSocket, agentId: string) {
+  if (!agentRooms.has(agentId)) agentRooms.set(agentId, new Set());
+  agentRooms.get(agentId)!.add(ws);
+}
+
+function leaveAgentRoom(ws: WebSocket, agentId: string) {
+  const room = agentRooms.get(agentId);
+  if (!room) return;
+  room.delete(ws);
+  if (room.size === 0) agentRooms.delete(agentId);
+}
+
+function broadcastToAgent(agentId: string, event: ServerEvent) {
+  const room = agentRooms.get(agentId);
+  if (!room) return;
+  const data = JSON.stringify(event);
+  for (const ws of room) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(data);
+  }
+}
+
 // ─── Wait Message (when AI is disabled workspace-wide) ────────────────────────
+
+const WAIT_MESSAGES = [
+  "Got your message. Someone from the team will be with you shortly.",
+  "Thanks for reaching out. Connecting you with a team member now.",
+  "Hang tight, we are getting someone to help you right away.",
+  "Your message is received. A team member will pick this up soon.",
+  "We hear you. Someone will be with you in just a moment.",
+  "Thanks for your patience. The team will be right with you.",
+  "On it. A team member is being connected to your conversation.",
+  "We got your message and someone will follow up with you shortly.",
+  "Hold tight, the team has been notified and will respond soon.",
+  "Message received. We are getting the right person to help you.",
+  "Thanks for writing in. A team member will be with you shortly.",
+  "Someone from our support team will join this chat very soon.",
+];
+
+let lastWaitIndex = -1;
+
+function pickWaitMessage(): string {
+  let idx;
+  do { idx = Math.floor(Math.random() * WAIT_MESSAGES.length); }
+  while (idx === lastWaitIndex && WAIT_MESSAGES.length > 1);
+  lastWaitIndex = idx;
+  return WAIT_MESSAGES[idx];
+}
 
 async function handleWaitMessage(conversationId: string) {
   try {
-    const content = "Please wait — we're connecting you with our team to help resolve your issue. Someone will be with you shortly.";
+    const content = pickWaitMessage();
     const msg = await prisma.message.create({
       data: { conversationId, senderType: "AI", content, isStreaming: false },
     });
@@ -314,6 +394,29 @@ function formatTagLabel(value: string): string {
     .join(" ");
 }
 
+// ─── Auto Category Updater ───────────────────────────────────────────────────
+
+async function autoUpdateCategory(conversationId: string, messageText: string, currentCategory: string) {
+  try {
+    const guess = guessCategory(messageText);
+    if (!guess) return;
+    // Only update if detected category differs and confidence is high
+    if (guess.category === currentCategory || guess.confidence < 0.75) return;
+
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { category: guess.category },
+    });
+
+    broadcast(conversationId, {
+      type: "category_update",
+      payload: { conversationId, category: guess.category },
+    });
+  } catch (err) {
+    console.error("[ws] Auto category error:", err);
+  }
+}
+
 // ─── Message Handler ──────────────────────────────────────────────────────────
 
 async function handleClientMessage(ws: WebSocket, raw: string) {
@@ -342,6 +445,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
             agentId: payload.agentId,
             rooms: new Set(),
           });
+          joinAgentRoom(ws, payload.agentId);
         } else {
           // User auth: token is externalUserId (simplified — production would verify app JWT)
           clients.set(ws, {
@@ -390,7 +494,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
     case "send_message": {
       if (!client) return;
 
-      const { conversationId, content, mediaId } = event;
+      const { conversationId, content, mediaId, isPrivate } = event;
 
       const conversation = await prisma.conversation.findUnique({
         where: { id: conversationId },
@@ -422,6 +526,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           senderType,
           senderId: senderId ?? null,
           content,
+          isPrivate: isPrivate === true && senderType === "AGENT",
           ...(mediaRecord ? { mediaId: mediaRecord.id } : {}),
         },
       });
@@ -440,10 +545,43 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         createdAt: message.createdAt.toISOString(),
         senderName,
         media: mediaRecord ?? undefined,
+        isPrivate: message.isPrivate,
       };
 
-      // Broadcast to all in room
-      broadcast(conversationId, { type: "message", payload: msgPayload });
+      // Private messages: only agents can see them
+      if (message.isPrivate) {
+        broadcastAgentsOnly(conversationId, { type: "message", payload: msgPayload });
+      } else {
+        broadcast(conversationId, { type: "message", payload: msgPayload });
+      }
+
+      // Auto-detect category from user message (fire-and-forget)
+      if (senderType === "USER") {
+        autoUpdateCategory(conversationId, content, conversation.category);
+      }
+
+      // Notify agents of new user message (skip private agent messages)
+      if (senderType === "USER" && !message.isPrivate) {
+        const notifyIds = conversation.assignedAgentId
+          ? [conversation.assignedAgentId]
+          : (await prisma.agent.findMany({ where: { isActive: true }, select: { id: true } })).map((a) => a.id);
+        const notifTitle = `New message from ${conversation.user.externalId}`;
+        const notifBody = content.slice(0, 100);
+        createNotifications({
+          agentIds: notifyIds,
+          type: "NEW_MESSAGE",
+          title: notifTitle,
+          body: notifBody,
+          conversationId,
+        }).then((ids) => {
+          notifyIds.forEach((agentId, i) => {
+            broadcastToAgent(agentId, {
+              type: "notification",
+              payload: { id: ids[i] ?? "", type: "NEW_MESSAGE", title: notifTitle, body: notifBody, conversationId, createdAt: new Date().toISOString() },
+            });
+          });
+        }).catch((e) => console.error("[ws] notify error:", e));
+      }
 
       // Trigger AI response if not paused and message is from user
       if (senderType === "USER" && !conversation.isAiPaused) {
@@ -478,6 +616,31 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         },
         ws
       );
+      break;
+    }
+
+    case "typing_preview": {
+      // Only users send typing previews; forward only to agents in the room
+      if (!client || client.role !== "user") return;
+      broadcastAgentsOnly(event.conversationId, {
+        type: "typing_preview",
+        payload: { conversationId: event.conversationId, text: event.text },
+      });
+      break;
+    }
+
+    case "mark_read": {
+      // Only users send read receipts
+      if (!client || client.role !== "user") return;
+      const readAt = new Date();
+      await prisma.conversation.update({
+        where: { id: event.conversationId },
+        data: { lastReadByUserAt: readAt },
+      }).catch(() => {});
+      broadcastAgentsOnly(event.conversationId, {
+        type: "read_receipt",
+        payload: { conversationId: event.conversationId, readAt: readAt.toISOString() },
+      });
       break;
     }
 
@@ -530,12 +693,28 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
             data: { status: "RESOLVED", isAiPaused: true },
           });
           break;
-        case "escalate":
-          await prisma.conversation.update({
+        case "escalate": {
+          const escalatedConv = await prisma.conversation.update({
             where: { id: conversationId },
             data: { status: "ESCALATED", isAiPaused: true },
+            include: { user: true },
           });
+          const adminAgents = await prisma.agent.findMany({ where: { isActive: true }, select: { id: true } });
+          const adminIds = adminAgents.map((a) => a.id);
+          const escTitle = "Conversation Escalated";
+          const escBody = `A conversation${escalatedConv.user.name ? ` from ${escalatedConv.user.name}` : ""} has been escalated and needs attention.`;
+          createNotifications({ agentIds: adminIds, type: "ESCALATED", title: escTitle, body: escBody, conversationId })
+            .then((ids) => {
+              adminIds.forEach((agentId, i) => {
+                broadcastToAgent(agentId, {
+                  type: "notification",
+                  payload: { id: ids[i] ?? "", type: "ESCALATED", title: escTitle, body: escBody, conversationId, createdAt: new Date().toISOString() },
+                });
+              });
+            })
+            .catch((e) => console.error("[ws] escalate notify error:", e));
           break;
+        }
       }
 
       broadcast(conversationId, {
@@ -574,6 +753,10 @@ wss.on("connection", (ws: WebSocket) => {
   });
 
   ws.on("close", () => {
+    const client = clients.get(ws);
+    if (client?.role === "agent" && client.agentId) {
+      leaveAgentRoom(ws, client.agentId);
+    }
     leaveAllRooms(ws);
     clients.delete(ws);
   });

@@ -11,14 +11,17 @@ import {
   Settings,
   LogOut,
   MessageSquare,
+  Bell,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
+import { useNotifications } from "@/components/notifications/notification-context";
 
 const nav = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/live", label: "Live Feed", icon: Radio },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/segments", label: "Segments", icon: Filter },
+  { href: "/notifications", label: "Notifications", icon: Bell },
 ];
 
 const secondary = [
@@ -31,6 +34,7 @@ interface SidebarProps {
 
 export function Sidebar({ agent }: SidebarProps) {
   const pathname = usePathname();
+  const { unreadCount } = useNotifications();
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -57,6 +61,7 @@ export function Sidebar({ agent }: SidebarProps) {
               href === "/"
                 ? pathname === "/"
                 : pathname.startsWith(href);
+            const showBadge = href === "/notifications" && unreadCount > 0;
             return (
               <Link
                 key={href}
@@ -69,7 +74,12 @@ export function Sidebar({ agent }: SidebarProps) {
                 )}
               >
                 <Icon className="w-4 h-4 shrink-0" />
-                {label}
+                <span className="flex-1">{label}</span>
+                {showBadge && (
+                  <span className="ml-auto min-w-[18px] h-[18px] rounded-full bg-rose-500 text-white text-[10px] font-semibold flex items-center justify-center px-1">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
               </Link>
             );
           })}

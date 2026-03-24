@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge, PriorityBadge, Badge } from "@/components/ui/badge";
@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime, categoryLabel } from "@/lib/utils/format";
 import { Search, RefreshCw, Bot, User, Pause, ChevronDown } from "lucide-react";
+
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
 interface ConversationItem {
   id: string;
@@ -50,6 +52,8 @@ export function LiveFeed() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const wsRef = useRef<WebSocket | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -93,6 +97,38 @@ export function LiveFeed() {
       .then((r) => r.ok ? r.json() : { aiEnabled: true })
       .then((d) => setAiEnabled(d.aiEnabled ?? true))
       .catch(() => {});
+  }, []);
+
+  // WS connection for real-time unread badges
+  useEffect(() => {
+    let cancelled = false;
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+
+    ws.onopen = async () => {
+      if (cancelled) { ws.close(); return; }
+      const res = await fetch("/api/auth/token");
+      const { token } = await res.json();
+      if (cancelled) { ws.close(); return; }
+      ws.send(JSON.stringify({ type: "auth", token, role: "agent" }));
+    };
+
+    ws.onmessage = (event) => {
+      const evt = JSON.parse(event.data);
+      if (evt.type === "notification" && evt.payload?.type === "NEW_MESSAGE" && evt.payload?.conversationId) {
+        const convId = evt.payload.conversationId as string;
+        setUnreadCounts((prev) => ({ ...prev, [convId]: (prev[convId] ?? 0) + 1 }));
+      }
+    };
+
+    ws.onclose = () => {};
+    ws.onerror = () => {};
+
+    return () => {
+      cancelled = true;
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+      else ws.addEventListener("open", () => ws.close(), { once: true });
+    };
   }, []);
 
   async function handleTakeover(convId: string) {
@@ -243,15 +279,30 @@ export function LiveFeed() {
               const lastMsg = conv.messages[0];
               const displayName = conv.user.name ?? conv.user.email ?? conv.user.externalId;
 
+              const unread = unreadCounts[conv.id] ?? 0;
               return (
                 <div key={conv.id} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors group">
                   {/* Avatar */}
-                  <Link href={`/conversations/${conv.id}`} tabIndex={-1}>
+                  <Link
+                    href={`/conversations/${conv.id}`}
+                    tabIndex={-1}
+                    onClick={() => setUnreadCounts((p) => { const n = { ...p }; delete n[conv.id]; return n; })}
+                    className="relative"
+                  >
                     <Avatar name={conv.user.name ?? conv.user.externalId} src={conv.user.avatarUrl} size="md" />
+                    {unread > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
                   </Link>
 
                   {/* Main content */}
-                  <Link href={`/conversations/${conv.id}`} className="flex-1 min-w-0">
+                  <Link
+                    href={`/conversations/${conv.id}`}
+                    className="flex-1 min-w-0"
+                    onClick={() => setUnreadCounts((p) => { const n = { ...p }; delete n[conv.id]; return n; })}
+                  >
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="text-sm font-semibold text-gray-900 truncate">{displayName}</span>
                       {conv.isAiPaused && aiEnabled && (

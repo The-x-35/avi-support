@@ -15,6 +15,7 @@ const VALID_CATEGORIES = [
 type ConversationCategory = (typeof VALID_CATEGORIES)[number];
 
 const MESSAGE_INCLUDE = {
+  where: { isPrivate: false },
   include: {
     agent: { select: { name: true, avatarUrl: true } },
     media: true,

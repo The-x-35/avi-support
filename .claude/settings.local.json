@@ -17,7 +17,8 @@
       "Bash(npx prisma:*)",
       "Bash(curl -v -X POST http://localhost:3000/api/upload/presign -H \"Content-Type: application/json\" -d '{\"\"\"\"fileName\"\"\"\":\"\"\"\"test.jpg\"\"\"\",\"\"\"\"mimeType\"\"\"\":\"\"\"\"image/jpeg\"\"\"\",\"\"\"\"fileSize\"\"\"\":1000}')",
       "Bash(curl -s -X POST http://localhost:3000/api/upload/presign -H \"Content-Type: application/json\" -d '{\"\"\"\"fileName\"\"\"\":\"\"\"\"test.jpg\"\"\"\",\"\"\"\"mimeType\"\"\"\":\"\"\"\"image/jpeg\"\"\"\",\"\"\"\"fileSize\"\"\"\":1000}')",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(ls /Users/arpitsingh/Projects/dashboard/app/\\\\\\(dashboard\\\\\\)/conversations/[id])"
     ]
   }
 }

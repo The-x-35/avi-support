@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
+import { createNotifications } from "@/lib/notifications";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
 
 // 5 new conversations per IP per minute — prevents spam-creating conversations
@@ -34,6 +35,14 @@ export async function POST(request: NextRequest) {
       status: "OPEN",
     },
   });
+
+  // Notify all active agents of new conversation (fire-and-forget)
+  prisma.agent.findMany({ where: { isActive: true }, select: { id: true } }).then((agents) => {
+    const agentIds = agents.map((a) => a.id);
+    const title = "New conversation started";
+    const body = `${sanitizedName ?? "A user"} started a new ${safeCategory.toLowerCase()} conversation.`;
+    return createNotifications({ agentIds, type: "NEW_CONVERSATION", title, body, conversationId: conversation.id });
+  }).catch(() => {});
 
   return NextResponse.json({
     conversationId: conversation.id,

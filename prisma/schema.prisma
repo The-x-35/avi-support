@@ -21,8 +21,10 @@ model Agent {
   refreshTokens   RefreshToken[]
   segments        Segment[]
   createdTickets  Ticket[]         @relation("CreatedTickets")
-  cannedResponses CannedResponse[]
-  notes           Note[]
+  cannedResponses   CannedResponse[]
+  notes             Note[]
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
 
   @@index([email])
   @@index([googleId])
@@ -92,8 +94,9 @@ model Conversation {
   assignedAgentId String?
   priority        Priority           @default(MEDIUM)
   subject         String?
-  lastMessageAt   DateTime?
-  createdAt       DateTime           @default(now())
+  lastMessageAt      DateTime?
+  lastReadByUserAt   DateTime?
+  createdAt          DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   ticketId        String?
   assignedAgent   Agent?             @relation("AssignedAgent", fields: [assignedAgentId], references: [id])
@@ -128,6 +131,7 @@ model Message {
   senderId       String?
   content        String
   isStreaming    Boolean      @default(false)
+  isPrivate      Boolean      @default(false)
   mediaId        String?      @unique
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -206,6 +210,40 @@ model WorkspaceSetting {
   id        String   @id @default("default")
   aiEnabled Boolean  @default(true)
   updatedAt DateTime @updatedAt
+}
+
+model Notification {
+  id             String           @id @default(uuid())
+  agentId        String
+  type           NotificationType
+  title          String
+  body           String
+  conversationId String?
+  isRead         Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  agent          Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, isRead])
+  @@index([agentId, createdAt])
+}
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  agentId   String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+}
+
+enum NotificationType {
+  NEW_CONVERSATION
+  NEW_MESSAGE
+  ASSIGNED
+  ESCALATED
 }
 
 enum Role {

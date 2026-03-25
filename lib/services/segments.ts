@@ -42,12 +42,12 @@ function buildClause(
     case "issue_type":
     case "resolution_status":
     case "product_area":
+    case "tag":
       return {
         tags: {
           some: {
             definition: {
-              type: field,
-              value: Array.isArray(value)
+              name: Array.isArray(value)
                 ? { in: value as string[] }
                 : String(value),
             },
@@ -133,9 +133,7 @@ export async function exportSegmentCsv(segmentId: string): Promise<string> {
       "Last Message At",
     ].join(","),
     ...conversations.map((c) => {
-      const tagMap = Object.fromEntries(
-        c.tags.map((t) => [t.definition.type, t.definition.value])
-      );
+      const tagNames = c.tags.map((t) => t.definition.name).join("; ");
       return [
         c.id,
         `"${c.user.name ?? ""}"`,
@@ -144,8 +142,8 @@ export async function exportSegmentCsv(segmentId: string): Promise<string> {
         c.status,
         c.priority,
         c.isAiPaused,
-        tagMap.issue_type ?? "",
-        tagMap.sentiment ?? "",
+        `"${tagNames}"`,
+        "",
         c.createdAt.toISOString(),
         c.lastMessageAt?.toISOString() ?? "",
       ].join(",");

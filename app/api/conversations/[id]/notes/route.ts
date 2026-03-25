@@ -11,8 +11,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const notes = await prisma.note.findMany({
-    where: { conversationId: id },
+    where: { conversationId: numId },
     include: { agent: { select: { id: true, name: true, avatarUrl: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -25,11 +26,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const { content } = await request.json();
   if (!content?.trim()) return NextResponse.json({ error: "content required" }, { status: 400 });
 
   const note = await prisma.note.create({
-    data: { conversationId: id, agentId: auth.payload.agentId, content: content.trim() },
+    data: { conversationId: numId, agentId: auth.payload.agentId, content: content.trim() },
     include: { agent: { select: { id: true, name: true, avatarUrl: true } } },
   });
   return NextResponse.json(note, { status: 201 });
@@ -41,9 +43,10 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const noteId = new URL(request.url).searchParams.get("noteId");
   if (!noteId) return NextResponse.json({ error: "noteId required" }, { status: 400 });
 
-  await prisma.note.deleteMany({ where: { id: noteId, conversationId: id, agentId: auth.payload.agentId } });
+  await prisma.note.deleteMany({ where: { id: noteId, conversationId: numId, agentId: auth.payload.agentId } });
   return NextResponse.json({ success: true });
 }

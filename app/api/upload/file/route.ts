@@ -44,9 +44,10 @@ export async function POST(req: NextRequest) {
 
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const conversationId = formData.get("conversationId") as string | null;
+    const rawConvId = formData.get("conversationId") as string | null;
+    const conversationId = rawConvId ? parseInt(rawConvId) : NaN;
 
-    if (!file || !conversationId) {
+    if (!file || isNaN(conversationId)) {
       return NextResponse.json({ error: "Missing file or conversationId" }, { status: 400 });
     }
 
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const key = `chat/${conversationId}/${randomUUID()}.${ext}`;
+    const key = `chat/${rawConvId}/${randomUUID()}.${ext}`;
     const buffer = Buffer.from(await file.arrayBuffer());
 
     await r2.send(new PutObjectCommand({

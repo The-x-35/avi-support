@@ -88,7 +88,8 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const redirectPath = state ?? "/";
+    const raw = state ?? "/";
+    const redirectPath = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
     const response = NextResponse.redirect(
       new URL(redirectPath, request.url)
     );

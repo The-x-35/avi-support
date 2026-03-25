@@ -31,8 +31,7 @@ export async function GET(request: NextRequest) {
       : undefined,
     userId: searchParams.get("userId") ?? undefined,
     search: searchParams.get("search") ?? undefined,
-    tagType: searchParams.get("tagType") ?? undefined,
-    tagValue: searchParams.get("tagValue") ?? undefined,
+    tagName: searchParams.get("tagName") ?? undefined,
     dateFrom: searchParams.get("dateFrom")
       ? new Date(searchParams.get("dateFrom")!)
       : undefined,

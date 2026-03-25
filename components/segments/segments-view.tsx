@@ -2,18 +2,23 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { formatRelativeTime } from "@/lib/utils/format";
-import { Plus, Filter, Download, Pin, Trash2 } from "lucide-react";
+import { Plus, Filter, Download, Pin, Trash2, Pencil } from "lucide-react";
 import { SegmentBuilder } from "./segment-builder";
 import { SegmentResults } from "./segment-results";
+
+interface FilterCondition {
+  field: string;
+  operator: string;
+  value: string;
+}
 
 interface Segment {
   id: string;
   name: string;
   description: string | null;
-  filters: unknown;
+  filters: { conditions: FilterCondition[]; operator: "AND" | "OR" };
   isPinned: boolean;
   createdAt: string;
   createdBy: { id: string; name: string; avatarUrl: string | null };
@@ -23,6 +28,7 @@ export function SegmentsView() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showBuilder, setShowBuilder] = useState(false);
+  const [editingSegment, setEditingSegment] = useState<Segment | null>(null);
   const [selectedSegment, setSelectedSegment] = useState<Segment | null>(null);
 
   const fetchSegments = async () => {
@@ -32,9 +38,7 @@ export function SegmentsView() {
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchSegments();
-  }, []);
+  useEffect(() => { fetchSegments(); }, []);
 
   async function handleExport(segment: Segment) {
     const res = await fetch(`/api/segments/${segment.id}/export`);
@@ -52,6 +56,17 @@ export function SegmentsView() {
     fetchSegments();
   }
 
+  async function handleTogglePin(segment: Segment) {
+    setSegments((prev) =>
+      prev.map((s) => s.id === segment.id ? { ...s, isPinned: !s.isPinned } : s)
+    );
+    await fetch(`/api/segments/${segment.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPinned: !segment.isPinned }),
+    });
+  }
+
   if (selectedSegment) {
     return (
       <SegmentResults
@@ -66,11 +81,7 @@ export function SegmentsView() {
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-100 px-5 py-3 flex items-center justify-between">
         <span className="text-sm text-gray-500">{segments.length} segments</span>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => setShowBuilder(true)}
-        >
+        <Button variant="primary" size="sm" onClick={() => setShowBuilder(true)}>
           <Plus className="w-3.5 h-3.5" />
           New Segment
         </Button>
@@ -92,7 +103,7 @@ export function SegmentsView() {
           </div>
         ) : (
           <div className="space-y-3">
-            {segments.map((seg: Segment) => (
+            {segments.map((seg) => (
               <div
                 key={seg.id}
                 className="bg-white border border-gray-100 rounded-xl p-4 hover:border-gray-200 transition-colors"
@@ -100,12 +111,14 @@ export function SegmentsView() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      {seg.isPinned && (
-                        <Pin className="w-3 h-3 text-amber-500 fill-amber-500" />
-                      )}
-                      <h3 className="text-sm font-semibold text-gray-900">
-                        {seg.name}
-                      </h3>
+                      <button
+                        onClick={() => handleTogglePin(seg)}
+                        title={seg.isPinned ? "Unpin" : "Pin"}
+                        className="text-gray-300 hover:text-amber-500 transition-colors"
+                      >
+                        <Pin className={`w-3 h-3 ${seg.isPinned ? "fill-amber-500 text-amber-500" : ""}`} />
+                      </button>
+                      <h3 className="text-sm font-semibold text-gray-900">{seg.name}</h3>
                     </div>
                     {seg.description && (
                       <p className="text-xs text-gray-400 mb-2">{seg.description}</p>
@@ -115,22 +128,21 @@ export function SegmentsView() {
                       <span>{seg.createdBy.name}</span>
                       <span>·</span>
                       <span>{formatRelativeTime(seg.createdAt)}</span>
+                      <span>·</span>
+                      <span className="text-gray-300">
+                        {(seg.filters.conditions ?? []).length} condition{(seg.filters.conditions ?? []).length !== 1 ? "s" : ""}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleExport(seg)}
-                    >
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button variant="ghost" size="sm" onClick={() => handleExport(seg)}>
                       <Download className="w-3.5 h-3.5" />
                       Export
                     </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setSelectedSegment(seg)}
-                    >
+                    <Button variant="ghost" size="icon" title="Edit" onClick={() => setEditingSegment(seg)}>
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => setSelectedSegment(seg)}>
                       View
                     </Button>
                     <Button
@@ -149,14 +161,20 @@ export function SegmentsView() {
         )}
       </div>
 
-      {/* Segment builder modal */}
+      {/* New segment modal */}
       {showBuilder && (
         <SegmentBuilder
           onClose={() => setShowBuilder(false)}
-          onCreated={() => {
-            fetchSegments();
-            setShowBuilder(false);
-          }}
+          onSaved={() => { fetchSegments(); setShowBuilder(false); }}
+        />
+      )}
+
+      {/* Edit segment modal */}
+      {editingSegment && (
+        <SegmentBuilder
+          editSegment={editingSegment}
+          onClose={() => setEditingSegment(null)}
+          onSaved={() => { fetchSegments(); setEditingSegment(null); }}
         />
       )}
     </div>

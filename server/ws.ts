@@ -8,6 +8,7 @@
 
 import "dotenv/config";
 import { WebSocketServer, WebSocket } from "ws";
+import { createServer } from "http";
 import { IncomingMessage } from "http";
 import { verifyAccessToken } from "../lib/auth/jwt";
 import { prisma } from "../lib/db/prisma";
@@ -218,12 +219,13 @@ function pickWaitMessage(): string {
 
 async function handleWaitMessage(conversationId: string) {
   try {
+    const numId = parseInt(conversationId);
     const content = pickWaitMessage();
     const msg = await prisma.message.create({
-      data: { conversationId, senderType: "AI", content, isStreaming: false },
+      data: { conversationId: numId, senderType: "AI", content, isStreaming: false },
     });
     await prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: numId },
       data: { lastMessageAt: new Date() },
     });
     broadcast(conversationId, {
@@ -245,8 +247,9 @@ async function handleWaitMessage(conversationId: string) {
 
 async function handleAiResponse(conversationId: string) {
   try {
+    const numId = parseInt(conversationId);
     const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
+      where: { id: numId },
       include: {
         user: true,
         messages: {
@@ -279,7 +282,7 @@ async function handleAiResponse(conversationId: string) {
     // Create a streaming message record
     const aiMessage = await prisma.message.create({
       data: {
-        conversationId,
+        conversationId: numId,
         senderType: "AI",
         content: "",
         isStreaming: true,
@@ -310,7 +313,7 @@ async function handleAiResponse(conversationId: string) {
     });
 
     await prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: numId },
       data: { lastMessageAt: new Date() },
     });
 
@@ -332,8 +335,9 @@ async function classifyAndTag(
   messages: Array<{ role: "user" | "assistant"; content: string }>
 ) {
   try {
+    const numId = parseInt(conversationId);
     const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
+      where: { id: numId },
       include: { user: true },
     });
     if (!conversation) return;
@@ -345,36 +349,35 @@ async function classifyAndTag(
       messages,
     });
 
-    for (const tag of tags) {
-      const def = await prisma.tagDefinition.upsert({
-        where: { type_value: { type: tag.type, value: tag.value } },
-        create: {
-          type: tag.type,
-          value: tag.value,
-          label: formatTagLabel(tag.value),
-          isSystem: true,
-        },
-        update: {},
-      });
+    // Batch all tag upserts in a single transaction instead of sequential round-trips
+    await prisma.$transaction(
+      tags.map((tag) => {
+        const tagName = typeof tag.value === "string" ? tag.value : String(tag.value);
+        return prisma.tagDefinition.upsert({
+          where: { name: tagName },
+          create: { name: tagName },
+          update: {},
+        });
+      })
+    );
 
-      await prisma.tag.upsert({
-        where: { conversationId_definitionId: { conversationId, definitionId: def.id } },
-        create: {
-          conversationId,
-          definitionId: def.id,
-          confidence: tag.confidence,
-          source: "AI",
-        },
-        update: {
-          confidence: tag.confidence,
-          updatedAt: new Date(),
-        },
-      });
-    }
+    // Now upsert conversation tags (definitions are guaranteed to exist)
+    const defRecords = await prisma.tagDefinition.findMany({
+      where: { name: { in: tags.map((t) => typeof t.value === "string" ? t.value : String(t.value)) } },
+    });
 
-    // Broadcast updated tags
+    await prisma.$transaction(
+      defRecords.map((def) =>
+        prisma.tag.upsert({
+          where: { conversationId_definitionId: { conversationId: numId, definitionId: def.id } },
+          create: { conversationId: numId, definitionId: def.id },
+          update: {},
+        })
+      )
+    );
+
     const updatedTags = await prisma.tag.findMany({
-      where: { conversationId },
+      where: { conversationId: numId },
       include: { definition: true },
     });
 
@@ -387,24 +390,18 @@ async function classifyAndTag(
   }
 }
 
-function formatTagLabel(value: string): string {
-  return value
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
 // ─── Auto Category Updater ───────────────────────────────────────────────────
 
 async function autoUpdateCategory(conversationId: string, messageText: string, currentCategory: string) {
   try {
+    const numId = parseInt(conversationId);
     const guess = guessCategory(messageText);
     if (!guess) return;
     // Only update if detected category differs and confidence is high
     if (guess.category === currentCategory || guess.confidence < 0.75) return;
 
     await prisma.conversation.update({
-      where: { id: conversationId },
+      where: { id: numId },
       data: { category: guess.category },
     });
 
@@ -430,6 +427,11 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       payload: { code: "PARSE_ERROR", message: "Invalid JSON" },
     });
     return;
+  }
+
+  // Normalize conversationId to string — clients may send number or string
+  if (event.conversationId !== undefined) {
+    event.conversationId = String(event.conversationId);
   }
 
   const client = clients.get(ws);
@@ -495,11 +497,21 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       if (!client) return;
 
       const { conversationId, content, mediaId, isPrivate } = event;
+      const convNumId = parseInt(conversationId);
 
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: { user: true },
-      });
+      // Parallelize all independent reads upfront
+      const [conversation, agentRecord, mediaRecord] = await Promise.all([
+        prisma.conversation.findUnique({
+          where: { id: convNumId },
+          include: { user: true },
+        }),
+        client.role === "agent" && client.agentId
+          ? prisma.agent.findUnique({ where: { id: client.agentId }, select: { name: true } })
+          : null,
+        mediaId
+          ? prisma.media.findUnique({ where: { id: mediaId } })
+          : null,
+      ]);
       if (!conversation) return;
 
       let senderType: "USER" | "AGENT" = "USER";
@@ -509,20 +521,14 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       if (client.role === "agent" && client.agentId) {
         senderType = "AGENT";
         senderId = client.agentId;
-        const agent = await prisma.agent.findUnique({ where: { id: client.agentId } });
-        senderName = agent?.name;
+        senderName = agentRecord?.name;
       } else {
         senderName = conversation.user.name ?? "User";
       }
 
-      // Look up media record if provided
-      const mediaRecord = mediaId
-        ? await prisma.media.findUnique({ where: { id: mediaId } })
-        : null;
-
       const message = await prisma.message.create({
         data: {
-          conversationId,
+          conversationId: convNumId,
           senderType,
           senderId: senderId ?? null,
           content,
@@ -532,8 +538,17 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       });
 
       await prisma.conversation.update({
-        where: { id: conversationId },
-        data: { lastMessageAt: new Date() },
+        where: { id: convNumId },
+        data: {
+          lastMessageAt: new Date(),
+          ...(senderType === "AGENT" && senderId
+            ? { assignedAgentId: senderId, isAiPaused: true }
+            : {}),
+          // Reopen conversation when user replies to a non-open chat
+          ...(senderType === "USER" && conversation.status !== "OPEN"
+            ? { status: "OPEN" }
+            : {}),
+        },
       });
 
       const msgPayload: MessagePayload = {
@@ -555,6 +570,14 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         broadcast(conversationId, { type: "message", payload: msgPayload });
       }
 
+      // Reopen conversation for agents viewing it
+      if (senderType === "USER" && conversation.status !== "OPEN") {
+        broadcast(conversationId, {
+          type: "control",
+          payload: { conversationId, action: "reopen" },
+        });
+      }
+
       // Auto-detect category from user message (fire-and-forget)
       if (senderType === "USER") {
         autoUpdateCategory(conversationId, content, conversation.category);
@@ -562,9 +585,17 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Notify agents of new user message (skip private agent messages)
       if (senderType === "USER" && !message.isPrivate) {
-        const notifyIds = conversation.assignedAgentId
-          ? [conversation.assignedAgentId]
-          : (await prisma.agent.findMany({ where: { isActive: true }, select: { id: true } })).map((a) => a.id);
+        let notifyIds: string[];
+        if (conversation.assignedAgentId) {
+          // Only notify assigned agent if they are ONLINE
+          const assignedAgent = await prisma.agent.findUnique({
+            where: { id: conversation.assignedAgentId },
+            select: { status: true },
+          });
+          notifyIds = assignedAgent?.status === "ONLINE" ? [conversation.assignedAgentId] : [];
+        } else {
+          notifyIds = (await prisma.agent.findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })).map((a) => a.id);
+        }
         const notifTitle = `New message from ${conversation.user.externalId}`;
         const notifBody = content.slice(0, 100);
         createNotifications({
@@ -572,7 +603,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           type: "NEW_MESSAGE",
           title: notifTitle,
           body: notifBody,
-          conversationId,
+          conversationId: convNumId,
         }).then((ids) => {
           notifyIds.forEach((agentId, i) => {
             broadcastToAgent(agentId, {
@@ -585,12 +616,53 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Trigger AI response if not paused and message is from user
       if (senderType === "USER" && !conversation.isAiPaused) {
-        const ws_setting = await prisma.workspaceSetting.findUnique({ where: { id: "default" } });
+        if (conversation.queuedAt) return;
+
+        // Parallelize: fetch settings + count prior user messages at once
+        const [ws_setting, priorUserMsgs] = await Promise.all([
+          prisma.workspaceSetting.findUnique({ where: { id: "default" } }),
+          prisma.message.count({
+            where: { conversationId: convNumId, senderType: "USER", NOT: { id: message.id } },
+          }),
+        ]);
         const aiEnabled = ws_setting?.aiEnabled ?? true;
+
+        if (priorUserMsgs === 0) {
+          // Single query to check capacity across all agents instead of N separate counts
+          const capacityResult = await prisma.$queryRaw<{ has_capacity: boolean }[]>`
+            SELECT EXISTS (
+              SELECT 1 FROM "Agent" a
+              WHERE a."isActive" = true AND a."status" = 'ONLINE'
+                AND (SELECT COUNT(*) FROM "Conversation" c WHERE c."assignedAgentId" = a."id" AND c."status" = 'OPEN') < a."maxConcurrentChats"
+            ) as has_capacity
+          `;
+          const hasCapacity = capacityResult[0]?.has_capacity ?? false;
+
+          if (!hasCapacity) {
+            const queueMsg =
+              ws_setting?.queueMessage?.trim() ||
+              "All our agents are currently busy. You have been added to the queue and someone will be with you as soon as possible.";
+            // Combine queue update + last message time into one update, and create message in parallel
+            const [qMsg] = await Promise.all([
+              prisma.message.create({
+                data: { conversationId: convNumId, senderType: "AI", content: queueMsg, isStreaming: false },
+              }),
+              prisma.conversation.update({
+                where: { id: convNumId },
+                data: { queuedAt: new Date(), lastMessageAt: new Date() },
+              }),
+            ]);
+            broadcast(conversationId, {
+              type: "message",
+              payload: { id: qMsg.id, conversationId, senderType: "AI", content: queueMsg, createdAt: qMsg.createdAt.toISOString() },
+            });
+            return;
+          }
+        }
+
         if (aiEnabled) {
           handleAiResponse(conversationId);
         } else {
-          // AI is disabled — send a "please wait" auto-message
           handleWaitMessage(conversationId);
         }
       }
@@ -634,7 +706,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       if (!client || client.role !== "user") return;
       const readAt = new Date();
       await prisma.conversation.update({
-        where: { id: event.conversationId },
+        where: { id: parseInt(event.conversationId) },
         data: { lastReadByUserAt: readAt },
       }).catch(() => {});
       broadcastAgentsOnly(event.conversationId, {
@@ -654,23 +726,24 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       }
 
       const { conversationId, action } = event;
+      const ctrlNumId = parseInt(conversationId);
 
       switch (action) {
         case "pause_ai":
           await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: { isAiPaused: true },
           });
           break;
         case "resume_ai":
           await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: { isAiPaused: false },
           });
           break;
         case "takeover":
           await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: {
               isAiPaused: true,
               assignedAgentId: client.agentId,
@@ -680,7 +753,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           break;
         case "release":
           await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: {
               isAiPaused: false,
               assignedAgentId: null,
@@ -689,21 +762,21 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           break;
         case "resolve":
           await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: { status: "RESOLVED", isAiPaused: true },
           });
           break;
         case "escalate": {
           const escalatedConv = await prisma.conversation.update({
-            where: { id: conversationId },
+            where: { id: ctrlNumId },
             data: { status: "ESCALATED", isAiPaused: true },
             include: { user: true },
           });
-          const adminAgents = await prisma.agent.findMany({ where: { isActive: true }, select: { id: true } });
+          const adminAgents = await prisma.agent.findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } });
           const adminIds = adminAgents.map((a) => a.id);
           const escTitle = "Conversation Escalated";
           const escBody = `A conversation${escalatedConv.user.name ? ` from ${escalatedConv.user.name}` : ""} has been escalated and needs attention.`;
-          createNotifications({ agentIds: adminIds, type: "ESCALATED", title: escTitle, body: escBody, conversationId })
+          createNotifications({ agentIds: adminIds, type: "ESCALATED", title: escTitle, body: escBody, conversationId: ctrlNumId })
             .then((ids) => {
               adminIds.forEach((agentId, i) => {
                 broadcastToAgent(agentId, {
@@ -729,19 +802,47 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 // ─── Server Setup ─────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
-
 const ALLOWED_ORIGIN = process.env.NEXT_PUBLIC_APP_URL;
+const INTERNAL_KEY = process.env.WS_INTERNAL_KEY ?? "";
+
+// HTTP server — handles both WS upgrades and internal API calls from Next.js
+const httpServer = createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/internal/notify") {
+    // Validate internal key if configured
+    if (INTERNAL_KEY && req.headers["x-internal-key"] !== INTERNAL_KEY) {
+      res.writeHead(401);
+      res.end();
+      return;
+    }
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      try {
+        const { agentId, notification } = JSON.parse(body);
+        broadcastToAgent(agentId, { type: "notification", payload: notification });
+        res.writeHead(200);
+        res.end("ok");
+      } catch {
+        res.writeHead(400);
+        res.end();
+      }
+    });
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
 
 const wss = new WebSocketServer({
-  port: PORT,
+  server: httpServer,
   verifyClient: (info: { origin: string; req: IncomingMessage }) => {
     if (!ALLOWED_ORIGIN) return true; // dev: allow all
     return info.origin === ALLOWED_ORIGIN;
   },
 });
 
-wss.on("listening", () => {
-  console.log(`[ws] WebSocket server listening on port ${PORT}`);
+httpServer.listen(PORT, () => {
+  console.log(`[ws] Server listening on port ${PORT}`);
 });
 
 wss.on("connection", (ws: WebSocket) => {
@@ -765,6 +866,76 @@ wss.on("connection", (ws: WebSocket) => {
     console.error("[ws] Client error:", err.message);
   });
 });
+
+// Queue timeout checker — promote stale queued conversations to tickets
+const DEFAULT_TICKET_MESSAGE =
+  "We have created support ticket #{ticketId} for your request. Our team will follow up with you as soon as possible.";
+
+setInterval(async () => {
+  try {
+    const setting = await prisma.workspaceSetting.findUnique({ where: { id: "default" } });
+    const timeoutMinutes = setting?.queueTimeoutMinutes ?? 5;
+    const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
+
+    const timedOutConvs = await prisma.conversation.findMany({
+      where: { queuedAt: { not: null, lt: cutoff }, status: "OPEN" },
+      include: { user: true },
+    });
+
+    if (timedOutConvs.length === 0) return;
+
+    // Find a system agent (admin preferred) to attach as ticket creator
+    const systemAgent = await prisma.agent.findFirst({
+      where: { isActive: true },
+      orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
+    });
+    if (!systemAgent) return;
+
+    for (const conv of timedOutConvs) {
+      const ticket = await prisma.ticket.create({
+        data: {
+          title: `Support request from ${conv.user.name ?? conv.user.externalId}`,
+          description: `Auto-created after queue timeout for conversation ${conv.id}`,
+          status: "OPEN",
+          priority: "MEDIUM",
+          createdById: systemAgent.id,
+        },
+      });
+
+      await prisma.conversation.update({
+        where: { id: conv.id },
+        data: { queuedAt: null, ticketId: ticket.id },
+      });
+
+      const ticketShortId = ticket.id.slice(-6).toUpperCase();
+      const rawMsg = setting?.ticketMessage?.trim() || DEFAULT_TICKET_MESSAGE;
+      const ticketMsg = rawMsg.replace("{ticketId}", ticketShortId);
+
+      const msg = await prisma.message.create({
+        data: { conversationId: conv.id, senderType: "AI", content: ticketMsg, isStreaming: false },
+      });
+      await prisma.conversation.update({
+        where: { id: conv.id },
+        data: { lastMessageAt: new Date() },
+      });
+
+      const convIdStr = String(conv.id);
+      broadcast(convIdStr, {
+        type: "message",
+        payload: {
+          id: msg.id,
+          conversationId: convIdStr,
+          senderType: "AI",
+          content: ticketMsg,
+          createdAt: msg.createdAt.toISOString(),
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[ws] Queue timeout check error:", err);
+  }
+}, 60_000);
 
 // Heartbeat — ping all clients every 30s
 setInterval(() => {

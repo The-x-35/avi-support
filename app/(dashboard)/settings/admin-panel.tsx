@@ -11,6 +11,7 @@ interface Agent {
   email: string;
   avatarUrl: string | null;
   role: string;
+  maxConcurrentChats: number;
 }
 
 export function AdminPanel({
@@ -21,6 +22,9 @@ export function AdminPanel({
   currentAgentId: string;
 }) {
   const [loading, setLoading] = useState<string | null>(null);
+  const [chatLimits, setChatLimits] = useState<Record<string, number>>(
+    Object.fromEntries(agents.map((a) => [a.id, a.maxConcurrentChats]))
+  );
 
   async function toggleRole(agent: Agent) {
     setLoading(agent.id);
@@ -48,6 +52,16 @@ export function AdminPanel({
     window.location.reload();
   }
 
+  async function saveChatLimit(agentId: string) {
+    setLoading(agentId);
+    await fetch("/api/agents", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: agentId, maxConcurrentChats: chatLimits[agentId] }),
+    });
+    setLoading(null);
+  }
+
   return (
     <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-50">
@@ -64,6 +78,29 @@ export function AdminPanel({
                 <p className="text-xs text-gray-400">{agent.email}</p>
               </div>
               <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-2 py-1.5">
+                  <span className="text-[11px] text-gray-500 whitespace-nowrap">Max chats</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={chatLimits[agent.id] ?? 5}
+                    onChange={(e) =>
+                      setChatLimits((prev) => ({
+                        ...prev,
+                        [agent.id]: Math.max(1, Math.min(100, parseInt(e.target.value) || 1)),
+                      }))
+                    }
+                    className="w-10 text-xs text-center focus:outline-none"
+                  />
+                  <button
+                    onClick={() => saveChatLimit(agent.id)}
+                    disabled={loading === agent.id}
+                    className="text-[11px] text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"

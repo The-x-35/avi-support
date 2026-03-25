@@ -25,7 +25,7 @@ export async function POST(
   }
 
   const conversation = await updateConversationControl(
-    id,
+    parseInt(id),
     action,
     auth.payload.agentId
   );

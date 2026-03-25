@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { userWsManager } from "@/lib/chat/user-ws";
 import Link from "next/link";
 import { CreditCard, User, Receipt, ShieldCheck, HelpCircle, MessageSquare, Send, ChevronRight, FileText } from "lucide-react";
 
@@ -20,7 +21,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 interface PastConv {
-  id: string;
+  id: number;
   category: string;
   status: string;
   createdAt: string;
@@ -34,10 +35,12 @@ export function CategoryPicker({ userId }: { userId: string }) {
   const [pastConvs, setPastConvs] = useState<PastConv[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    // Pre-warm the WS connection so it's ready before the user navigates to a chat
+    userWsManager.init(userId);
+
     fetch(`/api/chat/history?userId=${encodeURIComponent(userId)}`)
       .then((r) => r.ok ? r.json() : [])
       .then((d) =>
@@ -48,28 +51,15 @@ export function CategoryPicker({ userId }: { userId: string }) {
 
   function handleCategory(category: string) {
     setLoading(category);
-    const id = crypto.randomUUID();
-    router.push(`/chat/${id}?userId=${encodeURIComponent(userId)}&category=${category}&new=1`);
+    router.push(`/chat/new?userId=${encodeURIComponent(userId)}&category=${category}`);
   }
 
-  async function handleSendMessage() {
+  function handleSendMessage() {
     const text = message.trim();
-    if (!text || sending) return;
-    setSending(true);
-    try {
-      const res = await fetch("/api/chat/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, category: "GENERAL" }),
-      });
-      if (!res.ok) return;
-      const { conversationId } = await res.json();
-      router.push(
-        `/chat/${conversationId}?userId=${encodeURIComponent(userId)}&initialMessage=${encodeURIComponent(text)}`
-      );
-    } finally {
-      setSending(false);
-    }
+    if (!text) return;
+    router.push(
+      `/chat/new?userId=${encodeURIComponent(userId)}&category=GENERAL&initialMessage=${encodeURIComponent(text)}`
+    );
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -144,9 +134,12 @@ export function CategoryPicker({ userId }: { userId: string }) {
                       className="block rounded-2xl px-4 py-3.5 bg-gray-50 active:bg-gray-100 transition-colors"
                     >
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                          {cat}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                            {cat}
+                          </span>
+                          <span className="text-[10px] font-medium text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">#{conv.id}</span>
+                        </div>
                         <span className="text-[11px] text-gray-300">
                           {formatTime(conv.lastMessageAt)}
                         </span>
@@ -185,7 +178,7 @@ export function CategoryPicker({ userId }: { userId: string }) {
               <button
                 key={value}
                 onClick={() => handleCategory(value)}
-                disabled={loading !== null || sending}
+                disabled={loading !== null || false}
                 className="flex flex-col items-start p-4 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-colors text-left disabled:opacity-50"
               >
                 <div className={`w-10 h-10 rounded-xl border border-gray-100 flex items-center justify-center mb-3 ${iconWrap}`}>
@@ -217,10 +210,10 @@ export function CategoryPicker({ userId }: { userId: string }) {
           />
           <button
             onClick={handleSendMessage}
-            disabled={!message.trim() || sending}
+            disabled={!message.trim() || false}
             className="w-8 h-8 rounded-xl bg-gray-900 flex items-center justify-center shrink-0 disabled:opacity-30 transition-opacity"
           >
-            {sending ? (
+            {false ? (
               <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
             ) : (
               <Send className="w-3.5 h-3.5 text-white" />

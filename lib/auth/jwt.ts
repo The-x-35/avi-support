@@ -11,12 +11,14 @@ export interface RefreshTokenPayload extends JWTPayload {
   tokenId: string;
 }
 
-const accessSecret = new TextEncoder().encode(
-  process.env.JWT_ACCESS_SECRET ?? "fallback-secret"
-);
-const refreshSecret = new TextEncoder().encode(
-  process.env.JWT_REFRESH_SECRET ?? "fallback-refresh-secret"
-);
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing required env var: ${name}`);
+  return value;
+}
+
+const accessSecret = new TextEncoder().encode(requireEnv("JWT_ACCESS_SECRET"));
+const refreshSecret = new TextEncoder().encode(requireEnv("JWT_REFRESH_SECRET"));
 
 export async function signAccessToken(
   payload: Omit<AccessTokenPayload, keyof JWTPayload>
@@ -24,7 +26,7 @@ export async function signAccessToken(
   return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("15m")
+    .setExpirationTime("8h")
     .sign(accessSecret);
 }
 

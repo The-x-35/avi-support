@@ -13,11 +13,5 @@ export default async function NotificationsPage() {
     take: 50,
   });
 
-  // Mark all as read on page visit
-  await prisma.notification.updateMany({
-    where: { agentId: session.agentId, isRead: false },
-    data: { isRead: true },
-  });
-
   return <NotificationsClient initialNotifications={JSON.parse(JSON.stringify(notifications))} />;
 }

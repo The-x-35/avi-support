@@ -12,19 +12,24 @@ interface Props {
   children: React.ReactNode;
 }
 
-function urlBase64ToUint8Array(base64String: string): ArrayBuffer {
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
   const rawData = atob(base64);
   const arr = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; i++) arr[i] = rawData.charCodeAt(i);
-  return arr.buffer;
+  return arr;
 }
 
 export function NotificationProvider({ agentId, agentToken, initialUnread, children }: Props) {
   const [unreadCount, setUnreadCount] = useState(initialUnread);
   const wsRef = useRef<WebSocket | null>(null);
   const pushRegistered = useRef(false);
+
+  const markOneRead = useCallback(async (id: string) => {
+    await fetch("/api/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+    setUnreadCount((c) => Math.max(0, c - 1));
+  }, []);
 
   const markAllRead = useCallback(async () => {
     await fetch("/api/notifications", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
@@ -53,10 +58,16 @@ export function NotificationProvider({ agentId, agentToken, initialUnread, child
           const msg = JSON.parse(event.data);
           if (msg.type === "notification") {
             const n = msg.payload as NotificationItem & { isRead?: boolean };
-            // Increment unread count
             setUnreadCount((c) => c + 1);
-            // Dispatch for other components (e.g. notifications page) to pick up
             window.dispatchEvent(new CustomEvent<NotificationItem>("ws:notification", { detail: { ...n, isRead: false } }));
+            // Play sound for new messages
+            if (n.type === "NEW_MESSAGE") {
+              try {
+                const audio = new Audio("/notification.mp3");
+                audio.volume = 0.6;
+                audio.play().catch(() => {});
+              } catch { /* ignore */ }
+            }
           }
         } catch {}
       };
@@ -97,17 +108,23 @@ export function NotificationProvider({ agentId, agentToken, initialUnread, child
         const { publicKey } = await vapidRes.json();
         if (!publicKey) return;
 
+        // Always unsubscribe stale subscription and create a fresh one.
+        // This handles VAPID key rotation and expired subscriptions silently.
         const existing = await reg.pushManager.getSubscription();
-        const sub = existing ?? await reg.pushManager.subscribe({
+        if (existing) await existing.unsubscribe();
+
+        const sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
+          applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
         });
 
-        await fetch("/api/push/subscribe", {
+        const res = await fetch("/api/push/subscribe", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify(sub.toJSON()),
         });
+        if (!res.ok) throw new Error(`subscribe failed ${res.status}`);
         console.log("[push] subscribed", sub.endpoint);
       } catch (e) {
         console.warn("[push] setup failed:", e);
@@ -116,7 +133,7 @@ export function NotificationProvider({ agentId, agentToken, initialUnread, child
   }, [agentId]);
 
   return (
-    <NotificationContext.Provider value={{ unreadCount, markAllRead }}>
+    <NotificationContext.Provider value={{ unreadCount, markOneRead, markAllRead }}>
       {children}
     </NotificationContext.Provider>
   );

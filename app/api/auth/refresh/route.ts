@@ -12,7 +12,8 @@ export async function GET(request: NextRequest) {
   if (!limiter.check(getIP(request))) return tooManyRequests();
 
   const { searchParams } = new URL(request.url);
-  const redirect = searchParams.get("redirect") ?? "/";
+  const rawRedirect = searchParams.get("redirect") ?? "/";
+  const redirect = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
   const refreshToken = getRefreshToken(request);
 

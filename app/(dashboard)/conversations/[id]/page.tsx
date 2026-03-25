@@ -10,7 +10,7 @@ export default async function ConversationPage({
 }) {
   const { id } = await params;
   const [conversation, session] = await Promise.all([
-    getConversationById(id),
+    getConversationById(parseInt(id)),
     getSession(),
   ]);
 

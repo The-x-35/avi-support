@@ -2,6 +2,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { getConversationById } from "@/lib/services/conversations";
 import { prisma } from "@/lib/db/prisma";
+import { createNotifications } from "@/lib/notifications";
+import { pushNotificationToAgent } from "@/lib/ws-push";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
 
 const VALID_STATUSES = new Set(["OPEN", "PENDING", "RESOLVED", "ESCALATED", "CLOSED"]);
@@ -22,7 +24,8 @@ export async function GET(
   if (!readLimiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
-  const conversation = await getConversationById(id);
+  const numId = parseInt(id);
+  const conversation = await getConversationById(numId);
 
   if (!conversation) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -41,6 +44,7 @@ export async function PATCH(
   if (!writeLimiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const body = await request.json();
 
   const data: Record<string, unknown> = {};
@@ -53,6 +57,42 @@ export async function PATCH(
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
-  const conversation = await prisma.conversation.update({ where: { id }, data });
+  // Fetch current assignment before updating so we can detect changes
+  const before = data.assignedAgentId !== undefined
+    ? await prisma.conversation.findUnique({ where: { id: numId }, select: { assignedAgentId: true, user: { select: { name: true, externalId: true } } } })
+    : null;
+
+  const conversation = await prisma.conversation.update({ where: { id: numId }, data });
+
+  // If conversation was just assigned to a (different) agent, notify them
+  const newAgentId = data.assignedAgentId as string | null | undefined;
+  if (
+    newAgentId &&
+    newAgentId !== before?.assignedAgentId &&
+    newAgentId !== auth.payload.agentId // don't notify yourself
+  ) {
+    const userName = before?.user?.name ?? before?.user?.externalId ?? "A user";
+    const title = "Conversation assigned to you";
+    const body = `${userName}'s conversation has been assigned to you.`;
+
+    createNotifications({
+      agentIds: [newAgentId],
+      type: "ASSIGNED",
+      title,
+      body,
+      conversationId: numId,
+    }).then(([notifId]) => {
+      if (!notifId) return;
+      pushNotificationToAgent(newAgentId, {
+        id: notifId,
+        type: "ASSIGNED",
+        title,
+        body,
+        conversationId: id,
+        createdAt: new Date().toISOString(),
+      });
+    }).catch(() => {});
+  }
+
   return NextResponse.json(conversation);
 }

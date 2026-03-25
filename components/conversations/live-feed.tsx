@@ -12,7 +12,7 @@ import { Search, RefreshCw, Bot, User, Pause, ChevronDown } from "lucide-react";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
 interface ConversationItem {
-  id: string;
+  id: number;
   status: string;
   category: string;
   priority: string;
@@ -20,7 +20,7 @@ interface ConversationItem {
   lastMessageAt: string | null;
   user: { id: string; name: string | null; email: string | null; avatarUrl: string | null; externalId: string };
   assignedAgent: { id: string; name: string } | null;
-  tags: Array<{ definition: { type: string; value: string; label: string } }>;
+  tags: Array<{ definition: { name: string; color: string | null } }>;
   messages: Array<{ content: string; senderType: string; createdAt: string }>;
   _count: { messages: number };
 }
@@ -39,7 +39,7 @@ const STATUS_TABS: { value: StatusFilter; label: string }[] = [
 const CATEGORIES = ["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"];
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
-export function LiveFeed() {
+export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {}) {
   const [users, setUsers] = useState<ConversationItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,8 @@ export function LiveFeed() {
   const [priority, setPriority] = useState<string | null>(null);
   const [aiPaused, setAiPaused] = useState(false);
   const [unassigned, setUnassigned] = useState(false);
+  const [tag, setTag] = useState<string | null>(null);
+  const [tagDefs, setTagDefs] = useState<{ id: string; name: string; color: string | null }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -65,7 +67,9 @@ export function LiveFeed() {
     if (category) params.set("category", category);
     if (priority) params.set("priority", priority);
     if (aiPaused) params.set("isAiPaused", "true");
-    if (unassigned) params.set("assignedAgentId", "null");
+    if (tag) params.set("tagName", tag);
+    if (assignedAgentId) params.set("assignedAgentId", assignedAgentId);
+    else if (unassigned) params.set("assignedAgentId", "null");
 
     const res = await fetch(`/api/conversations?${params}`);
     const data = await res.json();
@@ -84,11 +88,11 @@ export function LiveFeed() {
     setTotal(data.total);
     if (!silent) setLoading(false);
     else setRefreshing(false);
-  }, [status, search, category, priority, aiPaused, unassigned]);
+  }, [status, search, category, priority, aiPaused, tag, assignedAgentId, unassigned]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(() => fetchData(true), 10_000);
+    const interval = setInterval(() => fetchData(true), 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -96,6 +100,10 @@ export function LiveFeed() {
     fetch("/api/settings/workspace")
       .then((r) => r.ok ? r.json() : { aiEnabled: true })
       .then((d) => setAiEnabled(d.aiEnabled ?? true))
+      .catch(() => {});
+    fetch("/api/tags")
+      .then((r) => r.ok ? r.json() : [])
+      .then((d) => setTagDefs(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, []);
 
@@ -131,7 +139,7 @@ export function LiveFeed() {
     };
   }, []);
 
-  async function handleTakeover(convId: string) {
+  async function handleTakeover(convId: number) {
     setActionLoading(convId + "_takeover");
     await fetch(`/api/conversations/${convId}/control`, {
       method: "POST",
@@ -142,7 +150,7 @@ export function LiveFeed() {
     fetchData(true);
   }
 
-  async function handleResumeAI(convId: string) {
+  async function handleResumeAI(convId: number) {
     setActionLoading(convId + "_resume");
     await fetch(`/api/conversations/${convId}/control`, {
       method: "POST",
@@ -154,7 +162,7 @@ export function LiveFeed() {
   }
 
   const activeFilterCount = [
-    category, priority,
+    category, priority, tag,
     aiPaused ? "paused" : null,
     unassigned ? "unassigned" : null,
   ].filter(Boolean).length;
@@ -190,6 +198,13 @@ export function LiveFeed() {
             onChange={setPriority}
           />
 
+          {/* Tag dropdown */}
+          <TagDropdown
+            value={tag}
+            tags={tagDefs}
+            onChange={setTag}
+          />
+
           {/* Quick toggles */}
           <button
             onClick={() => setAiPaused((v) => !v)}
@@ -216,7 +231,7 @@ export function LiveFeed() {
 
           {activeFilterCount > 0 && (
             <button
-              onClick={() => { setCategory(null); setPriority(null); setAiPaused(false); setUnassigned(false); }}
+              onClick={() => { setCategory(null); setPriority(null); setTag(null); setAiPaused(false); setUnassigned(false); }}
               className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
             >
               Clear ({activeFilterCount})
@@ -305,6 +320,7 @@ export function LiveFeed() {
                   >
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className="text-sm font-semibold text-gray-900 truncate">{displayName}</span>
+                      <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
                       {conv.isAiPaused && aiEnabled && (
                         <span className="flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded shrink-0">
                           <Pause className="w-2.5 h-2.5" />
@@ -362,6 +378,86 @@ export function LiveFeed() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function TagDropdown({
+  value,
+  tags,
+  onChange,
+}: {
+  value: string | null;
+  tags: { id: string; name: string; color: string | null }[];
+  onChange: (v: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = tags.filter((t) =>
+    !search || t.name.toLowerCase().includes(search.toLowerCase())
+  );
+  const active = value !== null;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => { setOpen((o) => !o); setSearch(""); }}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+          active
+            ? "bg-gray-900 text-white border-gray-900"
+            : "text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-700"
+        }`}
+      >
+        {active ? (
+          <>
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: tags.find((t) => t.name === value)?.color ?? "#d1d5db" }}
+            />
+            {value}
+          </>
+        ) : "Tag"}
+        <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""} ${active ? "text-white/70" : "text-gray-400"}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-100 rounded-xl shadow-lg z-20 overflow-hidden w-48">
+            <div className="px-3 py-2 border-b border-gray-100">
+              <input
+                autoFocus
+                placeholder="Search tags…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full text-xs outline-none placeholder:text-gray-300"
+              />
+            </div>
+            <div className="max-h-52 overflow-y-auto py-1">
+              <button
+                onClick={() => { onChange(null); setOpen(false); }}
+                className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-gray-50 ${!active ? "font-medium text-gray-900" : "text-gray-500"}`}
+              >
+                All Tags
+              </button>
+              {filtered.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => { onChange(t.name); setOpen(false); }}
+                  className={`w-full flex items-center gap-2 text-left px-3 py-2 text-xs transition-colors hover:bg-gray-50 ${value === t.name ? "font-medium text-gray-900 bg-gray-50" : "text-gray-600"}`}
+                >
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: t.color ?? "#d1d5db" }} />
+                  {t.name}
+                </button>
+              ))}
+              {filtered.length === 0 && (
+                <p className="px-3 py-2 text-xs text-gray-400">No tags found</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

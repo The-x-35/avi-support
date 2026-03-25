@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge, Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/avatar";
 import { formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { ChevronLeft, Download } from "lucide-react";
+import { ChevronLeft, Download, RefreshCw } from "lucide-react";
 
 interface Segment {
   id: string;
@@ -35,16 +35,26 @@ export function SegmentResults({ segment, onBack }: SegmentResultsProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  async function loadResults() {
+    const res = await fetch(`/api/segments/${segment.id}/execute`);
+    const data = await res.json();
+    setConversations(data.conversations);
+    setTotal(data.total);
+    setLastUpdated(new Date());
+  }
 
   useEffect(() => {
-    fetch(`/api/segments/${segment.id}/execute`)
-      .then((r) => r.json())
-      .then((data) => {
-        setConversations(data.conversations);
-        setTotal(data.total);
-        setLoading(false);
-      });
+    loadResults().then(() => setLoading(false));
   }, [segment.id]);
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await loadResults();
+    setRefreshing(false);
+  }
 
   async function handleExport() {
     const res = await fetch(`/api/segments/${segment.id}/export`);
@@ -74,6 +84,10 @@ export function SegmentResults({ segment, onBack }: SegmentResultsProps) {
           )}
         </div>
         <span className="text-xs text-gray-400">{total} conversations</span>
+        <Button variant="secondary" size="sm" onClick={handleRefresh} disabled={refreshing}>
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </Button>
         <Button variant="secondary" size="sm" onClick={handleExport}>
           <Download className="w-3.5 h-3.5" />
           Export CSV
@@ -118,6 +132,7 @@ export function SegmentResults({ segment, onBack }: SegmentResultsProps) {
                       <span className="text-sm font-medium text-gray-900">
                         {conv.user.name ?? conv.user.email ?? "User"}
                       </span>
+                      <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
                       <Badge variant="muted" size="sm">
                         {categoryLabel(conv.category)}
                       </Badge>

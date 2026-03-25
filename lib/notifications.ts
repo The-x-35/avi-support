@@ -7,11 +7,19 @@ export interface CreateNotificationInput {
   type: NotificationType;
   title: string;
   body: string;
-  conversationId?: string;
+  conversationId?: number;
 }
 
 export async function createNotifications(input: CreateNotificationInput): Promise<string[]> {
-  const ids = [...new Set(input.agentIds)];
+  const deduped = [...new Set(input.agentIds)];
+  if (!deduped.length) return [];
+
+  // Only notify agents who are currently ONLINE
+  const onlineAgents = await prisma.agent.findMany({
+    where: { id: { in: deduped }, status: "ONLINE" },
+    select: { id: true },
+  });
+  const ids = onlineAgents.map((a) => a.id);
   if (!ids.length) return [];
 
   const created = await prisma.notification.createManyAndReturn({
@@ -30,7 +38,7 @@ export async function createNotifications(input: CreateNotificationInput): Promi
       sendPushToAgent(agentId, {
         title: input.title,
         body: input.body,
-        conversationId: input.conversationId,
+        conversationId: input.conversationId != null ? String(input.conversationId) : undefined,
       }).catch((e) => console.error("[push] agent", agentId, e))
     )
   );

@@ -17,14 +17,15 @@ export async function GET(
   if (!readLimiter.check(getIP(request))) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
 
   const messages = await prisma.message.findMany({
-    where: { conversationId: id },
+    where: { conversationId: numId, isPrivate: false },
     include: {
       agent: { select: { name: true, avatarUrl: true } },
     },
     orderBy: { createdAt: "asc" },
-    take: 200, // hard cap — no unbounded queries
+    take: 200,
   });
 
   return NextResponse.json(messages);
@@ -38,6 +39,7 @@ export async function POST(
   if (!writeLimiter.check(getIP(request))) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const { content } = await request.json();
 
   if (!content?.trim()) {
@@ -52,7 +54,7 @@ export async function POST(
   }
 
   const conversation = await prisma.conversation.findUnique({
-    where: { id },
+    where: { id: numId },
     select: { id: true, status: true },
   });
 
@@ -66,14 +68,14 @@ export async function POST(
 
   const message = await prisma.message.create({
     data: {
-      conversationId: id,
+      conversationId: numId,
       senderType: "USER",
       content: content.trim(),
     },
   });
 
   await prisma.conversation.update({
-    where: { id },
+    where: { id: numId },
     data: { lastMessageAt: new Date() },
   });
 

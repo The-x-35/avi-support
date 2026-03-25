@@ -12,7 +12,7 @@ export async function TopIssuesChart() {
       </h3>
       <BarChart
         data={issues.map((i: TopIssueItem) => ({
-          label: i.label ?? i.value ?? "",
+          label: i.name ?? "",
           value: i.count,
         }))}
         color="#3b82f6"

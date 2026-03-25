@@ -1,20 +1,29 @@
 self.addEventListener("push", (event) => {
-  if (!event.data) return;
-  let data;
-  try {
-    data = event.data.json();
-  } catch {
-    return;
+  let title = "New message";
+  let body = "";
+  let url = "/";
+  let conversationId = undefined;
+
+  if (event.data) {
+    try {
+      const data = event.data.json();
+      title = data.title ?? title;
+      body = data.body ?? body;
+      url = data.data?.url ?? url;
+      conversationId = data.data?.conversationId;
+    } catch {}
   }
-  const options = {
-    body: data.body,
-    icon: data.icon ?? "/favicon.ico",
-    badge: "/favicon.ico",
-    data: data.data ?? {},
-    vibrate: [200, 100, 200],
-    requireInteraction: false,
-  };
-  event.waitUntil(self.registration.showNotification(data.title, options));
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+      data: { url, conversationId },
+      vibrate: [200, 100, 200],
+      requireInteraction: false,
+    })
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {

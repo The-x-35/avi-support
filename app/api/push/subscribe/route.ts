@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { authenticateRequest } from "@/lib/auth/api-auth";
+import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter({ limit: 10, windowMs: 60_000 });
 
 export async function POST(request: NextRequest) {
+  if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   const agentId = auth.payload.agentId;
@@ -24,6 +28,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   const agentId = auth.payload.agentId;

@@ -1,15 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { authenticateRequest } from "@/lib/auth/api-auth";
+import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+
+const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 export async function GET(request: NextRequest) {
+  if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   const agentId = auth.payload.agentId;
 
   const url = new URL(request.url);
   const cursor = url.searchParams.get("cursor");
-  const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "30"), 100);
+  const parsed = parseInt(url.searchParams.get("limit") ?? "30");
+  const limit = Math.min(Number.isNaN(parsed) ? 30 : parsed, 100);
 
   const [notifications, unreadCount] = await Promise.all([
     prisma.notification.findMany({
@@ -28,6 +33,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
+  if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   const agentId = auth.payload.agentId;

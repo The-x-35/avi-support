@@ -7,7 +7,7 @@ import { useNotifications } from "@/components/notifications/notification-contex
 import type { NotificationItem } from "@/components/notifications/notification-context";
 
 const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: string }> = {
-  NEW_MESSAGE:      { icon: MessageSquare, color: "text-blue-600",   bg: "bg-blue-50" },
+  NEW_MESSAGE:      { icon: MessageSquare, color: "text-blue-600",    bg: "bg-blue-50" },
   NEW_CONVERSATION: { icon: UserPlus,      color: "text-emerald-600", bg: "bg-emerald-50" },
   ASSIGNED:         { icon: UserPlus,      color: "text-violet-600",  bg: "bg-violet-50" },
   ESCALATED:        { icon: AlertTriangle, color: "text-rose-600",    bg: "bg-rose-50" },
@@ -15,8 +15,7 @@ const TYPE_META: Record<string, { icon: React.ElementType; color: string; bg: st
 
 function formatTime(iso: string) {
   const d = new Date(iso);
-  const now = Date.now();
-  const diff = now - d.getTime();
+  const diff = Date.now() - d.getTime();
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
@@ -26,12 +25,9 @@ function formatTime(iso: string) {
 
 export function NotificationsClient({ initialNotifications }: { initialNotifications: NotificationItem[] }) {
   const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
-  const { markAllRead } = useNotifications();
+  const { markOneRead, markAllRead } = useNotifications();
 
-  // Reset unread count when page mounts (since we marked all read on server)
-  useEffect(() => {
-    markAllRead();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   // Listen for new WS notifications
   useEffect(() => {
@@ -43,11 +39,33 @@ export function NotificationsClient({ initialNotifications }: { initialNotificat
     return () => window.removeEventListener("ws:notification", handler);
   }, []);
 
+  function handleClick(n: NotificationItem) {
+    if (!n.isRead) {
+      setNotifications((prev) =>
+        prev.map((x) => (x.id === n.id ? { ...x, isRead: true } : x))
+      );
+      markOneRead(n.id);
+    }
+  }
+
+  async function handleMarkAllRead() {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    await markAllRead();
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="h-14 flex items-center justify-between px-6 border-b border-gray-100 bg-white shrink-0">
         <h1 className="text-[15px] font-semibold text-gray-900">Notifications</h1>
+        {unreadCount > 0 && (
+          <button
+            onClick={handleMarkAllRead}
+            className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+          >
+            Mark all read
+          </button>
+        )}
       </div>
 
       {/* List */}
@@ -66,7 +84,7 @@ export function NotificationsClient({ initialNotifications }: { initialNotificat
               const meta = TYPE_META[n.type] ?? TYPE_META.NEW_MESSAGE;
               const Icon = meta.icon;
               const inner = (
-                <div className="flex items-start gap-3 px-5 py-4 hover:bg-gray-50 transition-colors">
+                <div className={`flex items-start gap-3 px-5 py-4 hover:bg-gray-50 transition-colors ${!n.isRead ? "bg-blue-50/40" : ""}`}>
                   <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${meta.bg}`}>
                     <Icon className={`w-4 h-4 ${meta.color}`} />
                   </div>
@@ -77,20 +95,29 @@ export function NotificationsClient({ initialNotifications }: { initialNotificat
                     </div>
                     <p className="text-[12px] text-gray-500 mt-0.5 line-clamp-2">{n.body}</p>
                   </div>
-                  {n.conversationId && (
-                    <ArrowUpRight className="w-4 h-4 text-gray-300 shrink-0 mt-0.5" />
-                  )}
+                  <div className="flex items-center gap-2 shrink-0 mt-0.5">
+                    {!n.isRead && (
+                      <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
+                    )}
+                    {n.conversationId && (
+                      <ArrowUpRight className="w-4 h-4 text-gray-300" />
+                    )}
+                  </div>
                 </div>
               );
 
               if (n.conversationId) {
                 return (
-                  <Link key={n.id} href={`/conversations/${n.conversationId}`}>
+                  <Link key={n.id} href={`/conversations/${String(n.conversationId)}`} onClick={() => handleClick(n)}>
                     {inner}
                   </Link>
                 );
               }
-              return <div key={n.id}>{inner}</div>;
+              return (
+                <button key={n.id} className="w-full text-left" onClick={() => handleClick(n)}>
+                  {inner}
+                </button>
+              );
             })}
           </div>
         )}

@@ -39,7 +39,7 @@ export default function ChatLoading() {
         </div>
       </div>
 
-      {/* Input — shows connecting state */}
+      {/* Input */}
       <div
         className="shrink-0 bg-white/95 border-t border-gray-100"
         style={{
@@ -48,10 +48,6 @@ export default function ChatLoading() {
           WebkitBackdropFilter: "blur(20px)",
         }}
       >
-        <div className="flex items-center justify-center gap-1.5 text-xs mx-3 mt-2 mb-1 py-2 rounded-xl bg-gray-50 text-gray-400">
-          <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin shrink-0" />
-          Connecting…
-        </div>
         <div className="px-3 pt-2">
           <div className="flex items-end gap-2 bg-gray-50 rounded-2xl border border-gray-200 px-4 py-3">
             <div className="flex-1 h-5 rounded" />

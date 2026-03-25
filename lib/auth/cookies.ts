@@ -14,7 +14,7 @@ export function setAuthCookies(
     httpOnly: true,
     secure: IS_PROD,
     sameSite: "lax",
-    maxAge: 15 * 60, // 15 minutes
+    maxAge: 8 * 60 * 60, // 8 hours
     path: "/",
   });
 

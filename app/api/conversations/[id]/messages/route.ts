@@ -18,13 +18,14 @@ export async function GET(
   if (!readLimiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
   const rawLimit = parseInt(searchParams.get("limit") ?? "50");
   const limit = Math.min(Math.max(1, rawLimit), 100);
 
   const messages = await prisma.message.findMany({
-    where: { conversationId: id },
+    where: { conversationId: numId },
     include: {
       agent: { select: { id: true, name: true, avatarUrl: true } },
     },
@@ -49,6 +50,7 @@ export async function POST(
   if (!writeLimiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
+  const numId = parseInt(id);
   const { content } = await request.json();
 
   if (!content?.trim()) {
@@ -64,7 +66,7 @@ export async function POST(
 
   const message = await prisma.message.create({
     data: {
-      conversationId: id,
+      conversationId: numId,
       senderType: "AGENT",
       senderId: auth.payload.agentId,
       content: content.trim(),
@@ -75,8 +77,12 @@ export async function POST(
   });
 
   await prisma.conversation.update({
-    where: { id },
-    data: { lastMessageAt: new Date() },
+    where: { id: numId },
+    data: {
+      lastMessageAt: new Date(),
+      assignedAgentId: auth.payload.agentId,
+      isAiPaused: true,
+    },
   });
 
   return NextResponse.json(message, { status: 201 });

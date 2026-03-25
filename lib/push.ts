@@ -21,9 +21,15 @@ export interface PushPayload {
 }
 
 export async function sendPushToAgent(agentId: string, payload: PushPayload) {
-  if (!initVapid()) return; // skip if VAPID keys not configured
+  if (!initVapid()) {
+    console.warn("[push] VAPID keys not configured — skipping push");
+    return;
+  }
   const subs = await prisma.pushSubscription.findMany({ where: { agentId } });
-  if (!subs.length) return;
+  if (!subs.length) {
+    console.warn("[push] no subscriptions for agent", agentId);
+    return;
+  }
 
   const data = JSON.stringify({
     title: payload.title,
@@ -42,8 +48,10 @@ export async function sendPushToAgent(agentId: string, payload: PushPayload) {
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           data
         );
+        console.log("[push] sent to", sub.endpoint.slice(0, 60));
       } catch (err: unknown) {
         const status = (err as { statusCode?: number }).statusCode;
+        console.error("[push] failed", status, (err as Error).message);
         if (status === 410 || status === 404) {
           await prisma.pushSubscription.deleteMany({ where: { endpoint: sub.endpoint } });
         }

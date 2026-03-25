@@ -14,14 +14,14 @@ interface UserProfileProps {
     avatarUrl: string | null;
     createdAt: Date;
     conversations: Array<{
-      id: string;
+      id: number;
       status: string;
       category: string;
       priority: string;
       isAiPaused: boolean;
       lastMessageAt: Date | null;
       createdAt: Date;
-      tags: Array<{ definition: { type: string; value: string; label: string } }>;
+      tags: Array<{ definition: { name: string; color: string | null } }>;
       messages: Array<{ content: string; senderType: string }>;
       _count: { messages: number };
     }>;
@@ -98,13 +98,6 @@ export function UserProfile({ user }: UserProfileProps) {
               <div className="divide-y divide-gray-50">
                 {user.conversations.map((conv: UserConversation) => {
                   const lastMsg = conv.messages[0];
-                  const sentimentTag = conv.tags.find(
-                    (t: UserConversationTag) => t.definition.type === "sentiment"
-                  );
-                  const issueTag = conv.tags.find(
-                    (t: UserConversationTag) => t.definition.type === "issue_type"
-                  );
-
                   return (
                     <Link
                       key={conv.id}
@@ -113,20 +106,16 @@ export function UserProfile({ user }: UserProfileProps) {
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
                           <Badge variant="muted" size="sm">
                             {categoryLabel(conv.category)}
                           </Badge>
                           <PriorityBadge priority={conv.priority} />
-                          {issueTag && (
-                            <Badge variant="info" size="sm">
-                              {issueTag.definition.label}
+                          {conv.tags.slice(0, 2).map((t: UserConversationTag) => (
+                            <Badge key={t.definition.name} variant="default" size="sm">
+                              {t.definition.name}
                             </Badge>
-                          )}
-                          {sentimentTag && (
-                            <Badge variant="default" size="sm">
-                              {sentimentTag.definition.label}
-                            </Badge>
-                          )}
+                          ))}
                         </div>
                         {lastMsg && (
                           <p className="text-sm text-gray-600 truncate">

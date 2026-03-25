@@ -9,6 +9,11 @@ import { Send, ChevronLeft, Shield, CheckCircle, ArrowUpCircle, Bot, User, Paper
 import confetti from "canvas-confetti";
 import { Fireworks } from "@fireworks-js/react";
 import imageCompression from "browser-image-compression";
+import DOMPurify from "dompurify";
+import { uploadMedia } from "@/lib/utils/upload";
+import { userWsManager } from "@/lib/chat/user-ws";
+
+const PURIFY_CONFIG = { ALLOWED_TAGS: ["b", "strong", "i", "em", "u", "br", "p", "span", "a"], ALLOWED_ATTR: ["href", "target", "rel", "class"] };
 
 // ─── Media upload ────────────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set([
@@ -32,20 +37,6 @@ async function safeJson(res: Response) {
     throw new Error(`Server error (${res.status}): ${text.slice(0, 120)}`);
   }
   return res.json();
-}
-
-async function uploadMedia(file: File, conversationId: string): Promise<{ url: string; mimeType: string; fileName: string; mediaId: string }> {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("conversationId", conversationId);
-
-  const res = await fetch("/api/upload/file", { method: "POST", body: form });
-  if (!res.ok) {
-    const body = await safeJson(res).catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
-  }
-  const { url, mediaId, mimeType, fileName } = await safeJson(res);
-  return { url, mediaId, mimeType, fileName };
 }
 
 // ─── iMessage spring ─────────────────────────────────────────────────────────
@@ -132,14 +123,13 @@ interface Conversation {
 }
 
 interface HistoryConversation {
-  id: string;
+  id: number;
   category: string;
   status: string;
   lastMessageAt: string | null;
   messages: { content: string; senderType: string }[];
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
 const CATEGORY_LABELS: Record<string, string> = {
   CARDS: "Cards",
@@ -231,25 +221,30 @@ function FireworksOverlay({ onDone }: { onDone: () => void }) {
 }
 
 export function UserChat({
-  conversation: initial,
+  conversationId,
   userId,
   initialMessage,
+  initialCategory,
+  skipWelcomeAnimation,
+  draftText,
 }: {
-  conversation: Conversation;
+  conversationId: string;
   userId: string;
   initialMessage?: string;
+  initialCategory?: string;
+  skipWelcomeAnimation?: boolean;
+  draftText?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [messages, setMessages] = useState<Message[]>(initial.messages);
-  const [convStatus, setConvStatus] = useState(initial.status);
-  const [isAgentActive, setIsAgentActive] = useState(initial.isAiPaused && !!initial.assignedAgentId);
-  const [text, setText] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [convStatus, setConvStatus] = useState("OPEN");
+  const [isAgentActive, setIsAgentActive] = useState(false);
+  const [text, setText] = useState(draftText ?? "");
   const [sending, setSending] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [wsReady, setWsReady] = useState(false);
   const [wsError, setWsError] = useState(false);
 
   // Typewriter engine
@@ -264,11 +259,10 @@ export function UserChat({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<HistoryConversation[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [convCategory, setConvCategory] = useState(initial.category);
+  const [convCategory, setConvCategory] = useState(initialCategory ?? "GENERAL");
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [categoryChanging, setCategoryChanging] = useState(false);
 
-  const wsRef = useRef<WebSocket | null>(null);
   const initialMessageSentRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -278,11 +272,17 @@ export function UserChat({
 
   function sendInitialMessageDirect(raw: string) {
     const content = raw.trim();
-    const ws = wsRef.current;
     if (!content || initialMessageSentRef.current) return;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!userWsManager.ready) return;
 
     initialMessageSentRef.current = true;
+
+    // Strip initialMessage (and new=1) from the URL so a refresh doesn't resend it
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("initialMessage");
+    cleanUrl.searchParams.delete("new");
+    window.history.replaceState(null, "", cleanUrl.toString());
+
     const tempId = `temp_${Date.now()}`;
     setFreshIds((prev) => new Set([...prev, tempId]));
     setMessages((prev) => [
@@ -297,7 +297,7 @@ export function UserChat({
       },
     ]);
 
-    ws.send(JSON.stringify({ type: "send_message", conversationId: initial.id, content }));
+    userWsManager.send({ type: "send_message", conversationId, content });
     setTimeout(() => {
       setFreshIds((prev) => {
         const n = new Set(prev);
@@ -364,32 +364,64 @@ export function UserChat({
     }, 18);
   }
 
+  // Bootstrap: load conversation data (messages, status, etc.)
   useEffect(() => {
-    let cancelled = false;
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
+    fetch(`/api/chat/${conversationId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        const serverMsgs: Message[] = (data.messages ?? []).filter(
+          (m: Message & { isPrivate?: boolean }) => !m.isPrivate
+        );
+        // Merge: keep optimistic temp messages only if the server doesn't have them yet
+        setMessages((prev) => {
+          const serverContents = new Set(
+            serverMsgs.filter((m) => m.senderType === "USER").map((m) => m.content)
+          );
+          const kept = prev.filter(
+            (m) => m.id.startsWith("temp_") && !serverContents.has(m.content)
+          );
+          return [...serverMsgs, ...kept];
+        });
+        setConvStatus(data.status ?? "OPEN");
+        setIsAgentActive(!!(data.isAiPaused && data.assignedAgentId));
+        if (!initialCategory) setConvCategory(data.category ?? "GENERAL");
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
-    ws.onopen = () => {
-      if (cancelled) { ws.close(); return; }
-      ws.send(JSON.stringify({ type: "auth", token: userId, role: "user" }));
-      ws.send(JSON.stringify({ type: "join", conversationId: initial.id }));
-      // Mark existing messages as read on open
-      ws.send(JSON.stringify({ type: "mark_read", conversationId: initial.id }));
-      setWsReady(true);
-      setWsError(false);
-      const firstMessage = initialMessageFromUrl;
-      if (firstMessage && !initialMessageSentRef.current) {
-        // Wait a beat so auth/join is processed before first send.
-        setTimeout(() => sendInitialMessageDirect(firstMessage), 200);
+  useEffect(() => {
+    // Ensure persistent connection is alive for this user
+    userWsManager.init(userId);
+    setWsError(false);
+
+    // Subscribe to ready-state changes — only used for error banner + initial message trigger
+    const unsubReady = userWsManager.onReadyChange((ready) => {
+      setWsError(!ready);
+      if (ready) {
+        userWsManager.send({ type: "mark_read", conversationId });
+        if (initialMessageFromUrl && !initialMessageSentRef.current) {
+          setTimeout(() => sendInitialMessageDirect(initialMessageFromUrl), 100);
+        }
       }
-    };
+    });
 
-    ws.onmessage = (event) => {
+    // Join this conversation's room
+    userWsManager.joinRoom(conversationId);
+    if (userWsManager.ready) {
+      userWsManager.send({ type: "mark_read", conversationId });
+      if (initialMessageFromUrl && !initialMessageSentRef.current) {
+        setTimeout(() => sendInitialMessageDirect(initialMessageFromUrl), 100);
+      }
+    }
+
+    function onMessage(event: MessageEvent) {
       const evt = JSON.parse(event.data);
       switch (evt.type) {
         case "message": {
           const p = evt.payload;
-          if (p.conversationId !== initial.id || p.senderType === "USER" || p.isPrivate) return;
+          if (p.conversationId !== conversationId || p.senderType === "USER" || p.isPrivate) return;
           setMessages((prev) => {
             if (prev.some((m) => m.id === p.id)) return prev;
             return [...prev, {
@@ -399,15 +431,12 @@ export function UserChat({
               media: p.media ?? undefined,
             }];
           });
-          // Mark as read since it's visible
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "mark_read", conversationId: initial.id }));
-          }
+          userWsManager.send({ type: "mark_read", conversationId });
           break;
         }
         case "ai_chunk": {
           const p = evt.payload;
-          if (p.conversationId !== initial.id) return;
+          if (p.conversationId !== conversationId) return;
           receivedRef.current += p.chunk;
           setStreamingId((prev) => {
             if (!prev) { startTypingInterval(p.messageId); return p.messageId; }
@@ -416,13 +445,13 @@ export function UserChat({
           break;
         }
         case "ai_done": {
-          if (evt.payload.conversationId !== initial.id) return;
+          if (evt.payload.conversationId !== conversationId) return;
           isDoneRef.current = true;
           break;
         }
         case "control": {
           const p = evt.payload;
-          if (p.conversationId !== initial.id) return;
+          if (p.conversationId !== conversationId) return;
           if (p.action === "takeover") setIsAgentActive(true);
           if (p.action === "resume_ai" || p.action === "release") setIsAgentActive(false);
           if (p.action === "resolve") setConvStatus("RESOLVED");
@@ -431,26 +460,22 @@ export function UserChat({
         }
         case "category_update": {
           const p = evt.payload;
-          if (p.conversationId !== initial.id) return;
+          if (p.conversationId !== conversationId) return;
           setConvCategory(p.category);
           break;
         }
       }
-    };
+    }
 
-    ws.onclose = () => setWsReady(false);
-    ws.onerror = () => { setWsReady(false); setWsError(true); };
+    userWsManager.addListener(onMessage);
 
     return () => {
-      cancelled = true;
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "leave", conversationId: initial.id }));
-        ws.close();
-      } else if (ws.readyState === WebSocket.CONNECTING) {
-        ws.addEventListener("open", () => ws.close(), { once: true });
-      }
+      unsubReady();
+      userWsManager.leaveRoom(conversationId);
+      userWsManager.removeListener(onMessage);
     };
-  }, [initial.id, userId, initialMessageFromUrl]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, userId]);
 
   async function handleFilePick(file: File) {
     setUploadError(null);
@@ -496,7 +521,7 @@ export function UserChat({
   }
 
   async function sendMessageWithContent(content: string) {
-    if ((!content.trim() && !pendingMedia) || sending || !wsReady) return;
+    if ((!content.trim() && !pendingMedia) || sending) return;
     const finalContent = content.trim();
     const tempId = `temp_${Date.now()}`;
     setSending(true);
@@ -506,7 +531,7 @@ export function UserChat({
     let media: MediaMeta | undefined;
     if (pendingMedia) {
       try {
-        const uploaded = await uploadMedia(pendingMedia.file, initial.id);
+        const uploaded = await uploadMedia(pendingMedia.file, conversationId);
         media = { id: uploaded.mediaId, url: uploaded.url, mimeType: uploaded.mimeType, fileName: uploaded.fileName };
         clearMedia();
       } catch (err: unknown) {
@@ -528,9 +553,7 @@ export function UserChat({
       animateInput(inputScope.current, { scaleY: 1, opacity: 1 }, { duration: 0.18, ease: [0.34, 1.56, 0.64, 1] });
     });
     // Clear typing preview for agents
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: "typing_preview", conversationId: initial.id, text: "" }));
-    }
+    userWsManager.send({ type: "typing_preview", conversationId: conversationId, text: "" });
 
     setFreshIds((prev) => new Set([...prev, tempId]));
     setMessages((prev) => [...prev, {
@@ -540,14 +563,12 @@ export function UserChat({
       createdAt: new Date().toISOString(), agent: null,
       media,
     }]);
-    wsRef.current!.send(
-      JSON.stringify({
-        type: "send_message",
-        conversationId: initial.id,
-        content: finalContent,
-        mediaId: media?.id,
-      })
-    );
+    userWsManager.send({
+      type: "send_message",
+      conversationId: conversationId,
+      content: finalContent,
+      mediaId: media?.id,
+    });
     setSending(false);
     inputRef.current?.focus();
     setTimeout(() => setFreshIds((prev) => { const n = new Set(prev); n.delete(tempId); return n; }), 800);
@@ -584,7 +605,7 @@ export function UserChat({
       await fetch("/api/chat/category", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: initial.id, category }),
+        body: JSON.stringify({ conversationId: conversationId, category }),
       });
       setConvCategory(category);
     } finally {
@@ -686,7 +707,7 @@ export function UserChat({
                 ) : (
                   <div className="flex flex-col gap-1 p-3">
                     {history.map((c) => {
-                      const isActive = c.id === initial.id;
+                      const isActive = String(c.id) === conversationId;
                       const lastMsg = c.messages[0];
                       const cat = CATEGORY_LABELS[c.category] ?? c.category;
                       const ago = c.lastMessageAt ? formatRelativeTime(c.lastMessageAt) : "";
@@ -770,7 +791,7 @@ export function UserChat({
         {messages.length === 0 && !streamingId && (
           <motion.div
             className="flex justify-start mb-2"
-            initial={{ opacity: 0, y: 40, scale: 0.72 }}
+            initial={skipWelcomeAnimation ? false : { opacity: 0, y: 40, scale: 0.72 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={BUBBLE_SPRING}
             style={{ originX: 0, originY: 1 }}
@@ -843,16 +864,9 @@ export function UserChat({
           WebkitBackdropFilter: "blur(20px)",
         }}
       >
-        {!wsReady && (
-          <div className={cn(
-            "flex items-center justify-center gap-1.5 text-xs mx-3 mt-2 mb-1 py-2 rounded-xl",
-            wsError ? "bg-red-50 text-red-500" : "bg-gray-50 text-gray-400"
-          )}>
-            {wsError ? (
-              <><span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />Connection failed</>
-            ) : (
-              <><span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin shrink-0" />Connecting…</>
-            )}
+        {wsError && (
+          <div className="flex items-center justify-center gap-1.5 text-xs mx-3 mt-2 mb-1 py-2 rounded-xl bg-red-50 text-red-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />Connection lost — reconnecting…
           </div>
         )}
 
@@ -970,7 +984,7 @@ export function UserChat({
             ref={inputScope}
             className={cn(
               "flex items-center gap-2 rounded-3xl border px-3 py-2.5",
-              wsReady ? "border-gray-200" : "border-gray-100 opacity-60"
+              "border-gray-200"
             )}
             style={{ backgroundColor: "#f2f2f7", transformOrigin: "bottom center" }}
           >
@@ -986,8 +1000,8 @@ export function UserChat({
             {/* Attach button */}
             <motion.button
               onClick={() => fileInputRef.current?.click()}
-              disabled={!wsReady || sending}
-              whileTap={wsReady ? { scale: 0.84 } : {}}
+              disabled={sending}
+              whileTap={{ scale: 0.84 }}
               className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-colors"
               style={{ touchAction: "manipulation" }}
             >
@@ -999,24 +1013,22 @@ export function UserChat({
               value={text}
               onChange={(e) => {
                 setText(e.target.value);
-                if (wsRef.current?.readyState === WebSocket.OPEN) {
-                  wsRef.current.send(JSON.stringify({ type: "typing_preview", conversationId: initial.id, text: e.target.value }));
-                }
+                userWsManager.send({ type: "typing_preview", conversationId: conversationId, text: e.target.value });
               }}
               onKeyDown={handleKeyDown}
-              placeholder={wsReady ? "Talk to Avi…" : "Connecting…"}
-              disabled={!wsReady}
+              placeholder="Talk to Avi…"
+              disabled={false}
               rows={1}
               className="flex-1 min-w-0 bg-transparent text-gray-900 placeholder:text-gray-400 outline-none ring-0 resize-none leading-relaxed disabled:cursor-not-allowed focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
               style={{ minHeight: "1.5rem", maxHeight: "7rem", outline: "none", boxShadow: "none", fontSize: "16px" }}
             />
             <motion.button
               onClick={sendMessage}
-              disabled={(!text.trim() && !pendingMedia) || sending || !wsReady}
-              whileTap={(text.trim() || pendingMedia) && wsReady ? { scale: 0.84 } : {}}
+              disabled={(!text.trim() && !pendingMedia) || sending}
+              whileTap={(text.trim() || pendingMedia) ? { scale: 0.84 } : {}}
               className={cn(
                 "w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all duration-150",
-                (text.trim() || pendingMedia) && wsReady && !sending
+                (text.trim() || pendingMedia) && !sending
                   ? "bg-[#0f0f0f] text-white shadow-sm"
                   : "bg-gray-200 text-gray-400 cursor-not-allowed"
               )}
@@ -1119,7 +1131,9 @@ function ChatBubble({ message: msg, isFresh = false }: { message: Message; isFre
           )}
 
           {msg.content ? (
-            <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
+            /<[a-z][\s\S]*>/i.test(msg.content)
+              ? <p className="text-[15px] leading-relaxed break-words [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(msg.content, PURIFY_CONFIG) }} />
+              : <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">{msg.content}</p>
           ) : !msg.media ? (
             <p className="text-[15px] italic opacity-50">📎 Attachment</p>
           ) : null}

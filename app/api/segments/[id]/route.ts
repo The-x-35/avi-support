@@ -28,6 +28,16 @@ export async function PATCH(
     data.description = typeof body.description === "string" ? body.description.slice(0, 500) : null;
   }
   if (typeof body.isPinned === "boolean") data.isPinned = body.isPinned;
+  if (body.filters !== undefined) {
+    if (
+      typeof body.filters !== "object" ||
+      !Array.isArray(body.filters.conditions) ||
+      !["AND", "OR"].includes(body.filters.operator)
+    ) {
+      return NextResponse.json({ error: "Invalid filters" }, { status: 400 });
+    }
+    data.filters = body.filters;
+  }
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });

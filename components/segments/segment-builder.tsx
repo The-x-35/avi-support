@@ -20,6 +20,7 @@ const FIELD_OPTIONS = [
   { value: "product_area", label: "Product Area" },
   { value: "resolution_status", label: "Resolution" },
   { value: "isAiPaused", label: "AI Paused" },
+  { value: "createdAt", label: "Created Date" },
 ];
 
 const VALUE_OPTIONS: Record<string, string[]> = {
@@ -33,25 +34,36 @@ const VALUE_OPTIONS: Record<string, string[]> = {
   isAiPaused: ["true", "false"],
 };
 
+const DATE_OPERATORS = [
+  { value: "gte", label: "on or after" },
+  { value: "lte", label: "on or before" },
+];
+
 interface SegmentBuilderProps {
   onClose: () => void;
-  onCreated: () => void;
+  onSaved: () => void;
+  // When provided, opens in edit mode
+  editSegment?: {
+    id: string;
+    name: string;
+    description: string | null;
+    filters: { conditions: FilterCondition[]; operator: "AND" | "OR" };
+  };
 }
 
-export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [operator, setOperator] = useState<"AND" | "OR">("AND");
-  const [conditions, setConditions] = useState<FilterCondition[]>([
-    { field: "status", operator: "eq", value: "OPEN" },
-  ]);
+export function SegmentBuilder({ onClose, onSaved, editSegment }: SegmentBuilderProps) {
+  const [name, setName] = useState(editSegment?.name ?? "");
+  const [description, setDescription] = useState(editSegment?.description ?? "");
+  const [operator, setOperator] = useState<"AND" | "OR">(editSegment?.filters.operator ?? "AND");
+  const [conditions, setConditions] = useState<FilterCondition[]>(
+    editSegment?.filters.conditions ?? [{ field: "status", operator: "eq", value: "OPEN" }]
+  );
   const [saving, setSaving] = useState(false);
 
+  const isEdit = !!editSegment;
+
   function addCondition() {
-    setConditions((prev) => [
-      ...prev,
-      { field: "status", operator: "eq", value: "OPEN" },
-    ]);
+    setConditions((prev) => [...prev, { field: "status", operator: "eq", value: "OPEN" }]);
   }
 
   function removeCondition(i: number) {
@@ -64,7 +76,14 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
         if (idx !== i) return c;
         const updated = { ...c, [key]: val };
         if (key === "field") {
-          updated.value = VALUE_OPTIONS[val]?.[0] ?? "";
+          // Reset operator and value when field changes
+          if (val === "createdAt") {
+            updated.operator = "gte";
+            updated.value = new Date().toISOString().split("T")[0];
+          } else {
+            updated.operator = "eq";
+            updated.value = VALUE_OPTIONS[val]?.[0] ?? "";
+          }
         }
         return updated;
       })
@@ -72,21 +91,31 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
   }
 
   async function handleSave() {
-    if (!name.trim()) return;
+    if (!name.trim() || conditions.length === 0) return;
     setSaving(true);
 
-    await fetch("/api/segments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: name.trim(),
-        description: description.trim() || null,
-        filters: { conditions, operator },
-      }),
-    });
+    const body = {
+      name: name.trim(),
+      description: description.trim() || null,
+      filters: { conditions, operator },
+    };
+
+    if (isEdit) {
+      await fetch(`/api/segments/${editSegment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } else {
+      await fetch("/api/segments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
 
     setSaving(false);
-    onCreated();
+    onSaved();
   }
 
   return (
@@ -94,7 +123,9 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-gray-100">
-          <h2 className="text-sm font-semibold text-gray-900">New Segment</h2>
+          <h2 className="text-sm font-semibold text-gray-900">
+            {isEdit ? "Edit Segment" : "New Segment"}
+          </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <X className="w-4 h-4" />
           </button>
@@ -103,9 +134,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
         <div className="p-5 space-y-4">
           {/* Name */}
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1.5 block">
-              Segment name
-            </label>
+            <label className="text-xs font-medium text-gray-500 mb-1.5 block">Segment name</label>
             <Input
               placeholder="e.g. Frustrated KYC users"
               value={name}
@@ -117,7 +146,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
           {/* Description */}
           <div>
             <label className="text-xs font-medium text-gray-500 mb-1.5 block">
-              Description (optional)
+              Description <span className="text-gray-300">(optional)</span>
             </label>
             <Input
               placeholder="What is this segment for?"
@@ -131,7 +160,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Match</span>
             <div className="flex gap-1">
-              {(["AND", "OR"] as const).map((op: "AND" | "OR") => (
+              {(["AND", "OR"] as const).map((op) => (
                 <button
                   key={op}
                   onClick={() => setOperator(op)}
@@ -150,41 +179,61 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
 
           {/* Conditions */}
           <div className="space-y-2">
-            {conditions.map((cond: FilterCondition, i: number) => (
+            {conditions.map((cond, i) => (
               <div key={i} className="flex items-center gap-2">
+                {/* Field */}
                 <select
                   value={cond.field}
                   onChange={(e) => updateCondition(i, "field", e.target.value)}
                   className="h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {FIELD_OPTIONS.map((opt: { value: string; label: string }) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
+                  {FIELD_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
 
-                <select
-                  value={cond.operator}
-                  onChange={(e) => updateCondition(i, "operator", e.target.value)}
-                  className="h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="eq">is</option>
-                  <option value="neq">is not</option>
-                  <option value="in">is any of</option>
-                </select>
+                {/* Operator */}
+                {cond.field === "createdAt" ? (
+                  <select
+                    value={cond.operator}
+                    onChange={(e) => updateCondition(i, "operator", e.target.value)}
+                    className="h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {DATE_OPERATORS.map((op) => (
+                      <option key={op.value} value={op.value}>{op.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    value={cond.operator}
+                    onChange={(e) => updateCondition(i, "operator", e.target.value)}
+                    className="h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="eq">is</option>
+                    <option value="neq">is not</option>
+                    <option value="in">is any of</option>
+                  </select>
+                )}
 
-                <select
-                  value={cond.value}
-                  onChange={(e) => updateCondition(i, "value", e.target.value)}
-                  className="flex-1 h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {(VALUE_OPTIONS[cond.field] ?? []).map((v: string) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
+                {/* Value */}
+                {cond.field === "createdAt" ? (
+                  <input
+                    type="date"
+                    value={cond.value}
+                    onChange={(e) => updateCondition(i, "value", e.target.value)}
+                    className="flex-1 h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                ) : (
+                  <select
+                    value={cond.value}
+                    onChange={(e) => updateCondition(i, "value", e.target.value)}
+                    className="flex-1 h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {(VALUE_OPTIONS[cond.field] ?? []).map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                )}
 
                 <button
                   onClick={() => removeCondition(i)}
@@ -207,9 +256,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-100">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
           <Button
             variant="primary"
             size="sm"
@@ -217,7 +264,7 @@ export function SegmentBuilder({ onClose, onCreated }: SegmentBuilderProps) {
             loading={saving}
             disabled={!name.trim() || conditions.length === 0}
           >
-            Create Segment
+            {isEdit ? "Save Changes" : "Create Segment"}
           </Button>
         </div>
       </div>

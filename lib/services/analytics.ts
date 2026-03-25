@@ -29,10 +29,7 @@ export async function getOverviewStats() {
         updatedAt: { gte: today },
         tags: {
           some: {
-            definition: {
-              type: "resolution_status",
-              value: "resolved_by_ai",
-            },
+            definition: { name: "Resolved by AI" },
           },
         },
       },
@@ -93,9 +90,8 @@ export async function getTagDistribution(days = 7) {
   const defMap = Object.fromEntries(definitions.map((d) => [d.id, d]));
 
   return tags.map((t) => ({
-    type: defMap[t.definitionId]?.type,
-    value: defMap[t.definitionId]?.value,
-    label: defMap[t.definitionId]?.label,
+    name: defMap[t.definitionId]?.name,
+    color: defMap[t.definitionId]?.color,
     count: t._count.id,
   }));
 }
@@ -104,14 +100,20 @@ export async function getSentimentTrend(days = 14) {
   const since = startOfDay(subDays(new Date(), days));
   const interval = eachDayOfInterval({ start: since, end: new Date() });
 
-  const sentimentTags = await prisma.tag.findMany({
-    where: {
-      createdAt: { gte: since },
-      definition: { type: "sentiment" },
-    },
-    include: { definition: true },
-    orderBy: { createdAt: "asc" },
-  });
+  const sentimentNames = ["Positive", "Neutral", "Frustrated", "Angry"];
+
+  // Use raw SQL aggregation instead of loading every tag row
+  const rows = await prisma.$queryRaw<
+    Array<{ date: string; name: string; count: bigint }>
+  >`
+    SELECT DATE(t."createdAt") as date, td."name", COUNT(*) as count
+    FROM "Tag" t
+    JOIN "TagDefinition" td ON t."definitionId" = td."id"
+    WHERE t."createdAt" >= ${since}
+      AND td."name" = ANY(${sentimentNames})
+    GROUP BY DATE(t."createdAt"), td."name"
+    ORDER BY date ASC
+  `;
 
   const byDay = new Map<
     string,
@@ -120,26 +122,20 @@ export async function getSentimentTrend(days = 14) {
 
   for (const day of interval) {
     byDay.set(day.toISOString().split("T")[0], {
-      positive: 0,
-      neutral: 0,
-      frustrated: 0,
-      angry: 0,
+      positive: 0, neutral: 0, frustrated: 0, angry: 0,
     });
   }
 
-  for (const tag of sentimentTags) {
-    const day = tag.createdAt.toISOString().split("T")[0];
-    const bucket = byDay.get(day);
+  for (const row of rows) {
+    const dateStr = typeof row.date === "string" ? row.date : new Date(row.date).toISOString().split("T")[0];
+    const bucket = byDay.get(dateStr);
     if (bucket) {
-      const val = tag.definition.value as keyof typeof bucket;
-      if (val in bucket) bucket[val]++;
+      const val = row.name.toLowerCase() as keyof typeof bucket;
+      if (val in bucket) bucket[val] += Number(row.count);
     }
   }
 
-  return Array.from(byDay.entries()).map(([date, counts]) => ({
-    date,
-    ...counts,
-  }));
+  return Array.from(byDay.entries()).map(([date, counts]) => ({ date, ...counts }));
 }
 
 export async function getTopIssues(days = 7) {
@@ -147,10 +143,7 @@ export async function getTopIssues(days = 7) {
 
   const issues = await prisma.tag.groupBy({
     by: ["definitionId"],
-    where: {
-      createdAt: { gte: since },
-      definition: { type: "issue_type" },
-    },
+    where: { createdAt: { gte: since } },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
     take: 10,
@@ -163,8 +156,7 @@ export async function getTopIssues(days = 7) {
   const defMap = Object.fromEntries(definitions.map((d) => [d.id, d]));
 
   return issues.map((i) => ({
-    value: defMap[i.definitionId]?.value,
-    label: defMap[i.definitionId]?.label,
+    name: defMap[i.definitionId]?.name,
     count: i._count.id,
   }));
 }

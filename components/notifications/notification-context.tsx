@@ -7,18 +7,20 @@ export interface NotificationItem {
   type: string;
   title: string;
   body: string;
-  conversationId?: string | null;
+  conversationId?: string | number | null;
   isRead: boolean;
   createdAt: string;
 }
 
 interface NotificationContextValue {
   unreadCount: number;
+  markOneRead: (id: string) => void;
   markAllRead: () => void;
 }
 
 export const NotificationContext = createContext<NotificationContextValue>({
   unreadCount: 0,
+  markOneRead: () => {},
   markAllRead: () => {},
 });
 

@@ -2,12 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import DOMPurify from "dompurify";
 import { Avatar } from "@/components/ui/avatar";
-import { Badge, StatusBadge, PriorityBadge, SentimentBadge } from "@/components/ui/badge";
+import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
 import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock, EyeOff, Paperclip, Bold, Italic, Underline } from "lucide-react";
 import imageCompression from "browser-image-compression";
+import { uploadMedia } from "@/lib/utils/upload";
+import { agentWsManager } from "@/lib/agent-ws";
 
 // ─── Media upload ─────────────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set([
@@ -24,24 +27,26 @@ interface PendingMedia {
   isVideo: boolean;
 }
 
-async function uploadMedia(file: File, conversationId: string) {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("conversationId", conversationId);
-  const res = await fetch("/api/upload/file", { method: "POST", body: form });
-  if (!res.ok) throw new Error("Upload failed");
-  return res.json() as Promise<{ url: string; mediaId: string; mimeType: string; fileName: string }>;
-}
+// Render message content — HTML (from formatted agent messages) or plain text
+const PURIFY_CONFIG = { ALLOWED_TAGS: ["b", "strong", "i", "em", "u", "br", "p", "span", "a"], ALLOWED_ATTR: ["href", "target", "rel", "class"] };
 
-// ─── Inline text formatter ─────────────────────────────────────────────────────
-function renderFormatted(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*|__[^_\n]+__)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) return <strong key={i}>{part.slice(2, -2)}</strong>;
-    if (part.startsWith("*") && part.endsWith("*")) return <em key={i}>{part.slice(1, -1)}</em>;
-    if (part.startsWith("__") && part.endsWith("__")) return <u key={i}>{part.slice(2, -2)}</u>;
-    return part;
-  });
+function MessageContent({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  const hasHtml = /<[a-z][\s\S]*>/i.test(content);
+  if (hasHtml) {
+    const clean = DOMPurify.sanitize(content, PURIFY_CONFIG) + (isStreaming ? "<span class='inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse align-middle'></span>" : "");
+    return (
+      <p
+        className="text-sm leading-relaxed break-words [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline"
+        dangerouslySetInnerHTML={{ __html: clean }}
+      />
+    );
+  }
+  return (
+    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+      {content}
+      {isStreaming && <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse" />}
+    </p>
+  );
 }
 import { cn } from "@/lib/utils/cn";
 
@@ -64,15 +69,19 @@ interface Message {
   media?: MediaMeta | null;
 }
 
+interface TagDefinition {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
 interface Tag {
   id: string;
-  definition: { type: string; value: string; label: string; color: string | null };
-  confidence: number | null;
-  source: string;
+  definition: TagDefinition;
 }
 
 interface Conversation {
-  id: string;
+  id: number;
   status: string;
   category: string;
   priority: string;
@@ -95,7 +104,7 @@ interface Conversation {
 }
 
 interface ConvSummary {
-  id: string;
+  id: number;
   status: string;
   category: string;
   lastMessageAt: string | null;
@@ -104,7 +113,7 @@ interface ConvSummary {
 }
 
 interface UserHistoryItem {
-  id: string;
+  id: number;
   category: string;
   status: string;
   lastMessageAt: string | null;
@@ -112,7 +121,7 @@ interface UserHistoryItem {
 }
 
 interface HistoryDetail {
-  id: string;
+  id: number;
   category: string;
   status: string;
   createdAt: string;
@@ -140,7 +149,6 @@ interface ConversationViewProps {
   currentAgentId: string;
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
 export function ConversationView({ conversation: initial, currentAgentId }: ConversationViewProps) {
   const [conv, setConv] = useState(initial);
@@ -151,7 +159,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [typingAgent, setTypingAgent] = useState(false);
   const [userTypingText, setUserTypingText] = useState<string>("");
   const [lastReadByUserAt, setLastReadByUserAt] = useState<string | null>(initial.lastReadByUserAt ?? null);
-  const [replyText, setReplyText] = useState("");
+  const [isEmpty, setIsEmpty] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -165,12 +173,10 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   // Editing state
   const [editOpen, setEditOpen] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [addTagForType, setAddTagForType] = useState<string | null>(null);
-  const [addTagNewType, setAddTagNewType] = useState("");
-  const [newTagLabel, setNewTagLabel] = useState("");
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [tagSearch, setTagSearch] = useState("");
   const [tagSaving, setTagSaving] = useState(false);
-  const [editingTagId, setEditingTagId] = useState<string | null>(null);
-  const [editingTagLabel, setEditingTagLabel] = useState("");
+  const [allTagDefs, setAllTagDefs] = useState<TagDefinition[]>([]);
 
   // Workspace setting
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -197,10 +203,10 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [noteSaving, setNoteSaving] = useState(false);
 
   const [sendDropdownOpen, setSendDropdownOpen] = useState(false);
+  const [activeFormats, setActiveFormats] = useState<Set<string>>(new Set());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const scrollToBottom = useCallback(() => {
@@ -264,28 +270,19 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   }, [conv.id]);
 
 
-  // WebSocket setup
+  // WebSocket setup — uses a persistent singleton so switching conversations
+  // never tears down the connection (no "Connecting…" flash)
   useEffect(() => {
-    let cancelled = false;
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
+    agentWsManager.init(getAccessToken);
+    agentWsManager.joinRoom(String(conv.id));
 
-    ws.onopen = async () => {
-      // Strict Mode mounts twice in dev — if cleanup already ran, close immediately
-      if (cancelled) { ws.close(); return; }
-      const token = await getAccessToken();
-      if (cancelled) { ws.close(); return; }
-      ws.send(JSON.stringify({ type: "auth", token, role: "agent" }));
-      ws.send(JSON.stringify({ type: "join", conversationId: conv.id }));
-    };
-
-    ws.onmessage = (event) => {
+    function onMessage(event: MessageEvent) {
       const evt = JSON.parse(event.data);
 
       switch (evt.type) {
         case "message": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setMessages((prev) => {
             if (prev.some((m) => m.id === p.id)) return prev;
             return [
@@ -303,11 +300,23 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               },
             ];
           });
+          if (!p.isPrivate) {
+            setSidebarConvs((prev) => {
+              const next = prev.map((c) =>
+                String(c.id) === p.conversationId
+                  ? { ...c, messages: [{ content: p.content, senderType: p.senderType }], lastMessageAt: p.createdAt }
+                  : c
+              );
+              const idx = next.findIndex((c) => String(c.id) === p.conversationId);
+              if (idx > 0) { const [item] = next.splice(idx, 1); next.unshift(item); }
+              return next;
+            });
+          }
           break;
         }
         case "ai_chunk": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setStreamingMsg((prev) =>
             prev
               ? { ...prev, content: prev.content + p.chunk }
@@ -317,7 +326,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
         }
         case "ai_done": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setStreamingMsg((sm) => {
             if (sm) {
               setMessages((prev) => {
@@ -336,6 +345,17 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   },
                 ];
               });
+              setSidebarConvs((prev) => {
+                const now = new Date().toISOString();
+                const next = prev.map((c) =>
+                  String(c.id) === p.conversationId
+                    ? { ...c, messages: [{ content: sm.content, senderType: "AI" }], lastMessageAt: now }
+                    : c
+                );
+                const idx = next.findIndex((c) => String(c.id) === p.conversationId);
+                if (idx > 0) { const [item] = next.splice(idx, 1); next.unshift(item); }
+                return next;
+              });
             }
             return null;
           });
@@ -343,7 +363,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
         }
         case "typing": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           if (p.senderType === "agent") {
             setTypingAgent(p.isTyping);
           }
@@ -351,7 +371,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
         }
         case "control": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           if (p.action === "pause_ai") setConv((c) => ({ ...c, isAiPaused: true }));
           if (p.action === "resume_ai") setConv((c) => ({ ...c, isAiPaused: false }));
           if (p.action === "takeover") {
@@ -368,53 +388,61 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           }
           if (p.action === "release") setConv((c) => ({ ...c, isAiPaused: false, assignedAgentId: null, assignedAgent: null }));
           if (p.action === "resolve") setConv((c) => ({ ...c, status: "RESOLVED", isAiPaused: true }));
+          if (p.action === "reopen") setConv((c) => ({ ...c, status: "OPEN" }));
           if (p.action === "escalate") setConv((c) => ({ ...c, status: "ESCALATED", isAiPaused: true }));
           setControlLoading(null);
           break;
         }
         case "tag_update": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setConv((c) => ({ ...c, tags: p.tags }));
           break;
         }
         case "typing_preview": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setUserTypingText(p.text ?? "");
           break;
         }
         case "read_receipt": {
           const p = evt.payload;
-          if (p.conversationId !== conv.id) return;
+          if (p.conversationId !== String(conv.id)) return;
           setLastReadByUserAt(p.readAt);
           break;
         }
         case "notification": {
           const p = evt.payload;
-          if (p.type === "NEW_MESSAGE" && p.conversationId && p.conversationId !== conv.id) {
+          if (p.type === "NEW_MESSAGE" && p.conversationId && p.conversationId !== String(conv.id)) {
+            playNotificationSound();
             setUnreadCounts((prev) => ({
               ...prev,
               [p.conversationId]: (prev[p.conversationId] ?? 0) + 1,
             }));
+            if (p.body) {
+              setSidebarConvs((prev) => {
+                const now = new Date().toISOString();
+                const next = prev.map((c) =>
+                  String(c.id) === p.conversationId
+                    ? { ...c, messages: [{ content: p.body, senderType: "USER" }], lastMessageAt: now }
+                    : c
+                );
+                const idx = next.findIndex((c) => String(c.id) === p.conversationId);
+                if (idx > 0) { const [item] = next.splice(idx, 1); next.unshift(item); }
+                return next;
+              });
+            }
           }
           break;
         }
       }
     };
 
-    ws.onclose = () => {};
-    ws.onerror = () => {};
+    agentWsManager.addListener(onMessage);
 
     return () => {
-      cancelled = true;
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "leave", conversationId: conv.id }));
-        ws.close();
-      } else if (ws.readyState === WebSocket.CONNECTING) {
-        // Close it as soon as it connects to avoid "closed before established" error
-        ws.addEventListener("open", () => ws.close(), { once: true });
-      }
+      agentWsManager.leaveRoom(String(conv.id));
+      agentWsManager.removeListener(onMessage);
     };
   }, [conv.id]);
 
@@ -426,9 +454,9 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   async function sendControl(action: string) {
     setControlLoading(action);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (agentWsManager.ready) {
       // WS path — loading clears when the control event bounces back
-      wsRef.current.send(JSON.stringify({ type: "control", conversationId: conv.id, action }));
+      agentWsManager.send({ type: "control", conversationId: String(conv.id), action });
     } else {
       // REST fallback when WS is not connected
       try {
@@ -458,7 +486,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }
 
-  async function openHistoryDetail(id: string) {
+  async function openHistoryDetail(id: number) {
     setHistoryDetailLoading(true);
     setHistoryDetail(null);
     try {
@@ -483,58 +511,70 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   }
 
   async function removeTag(tagId: string) {
-    // Optimistic update
     setConv((c) => ({ ...c, tags: c.tags.filter((t) => t.id !== tagId) }));
     const res = await fetch(`/api/conversations/${conv.id}/tags?tagId=${tagId}`, { method: "DELETE" });
     if (!res.ok) {
-      // rollback — re-fetch tags
       const r = await fetch(`/api/conversations/${conv.id}/tags`);
       if (r.ok) { const tags = await r.json(); setConv((c) => ({ ...c, tags })); }
     }
   }
 
-  async function saveTag(type: string) {
-    const label = newTagLabel.trim();
-    if (!type || !label) return;
+  async function addTag(defId: string) {
+    if (tagSaving || conv.tags.some((t) => t.definition.id === defId)) {
+      setTagPickerOpen(false);
+      setTagSearch("");
+      return;
+    }
     setTagSaving(true);
     try {
       const res = await fetch(`/api/conversations/${conv.id}/tags`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, value: label.toLowerCase().replace(/\s+/g, "_"), label }),
+        body: JSON.stringify({ definitionId: defId }),
       });
       if (res.ok) {
         const tag = await res.json();
         setConv((c) => ({ ...c, tags: [...c.tags.filter((t) => t.id !== tag.id), tag] }));
-        setNewTagLabel("");
-        setAddTagForType(null);
-        setAddTagNewType("");
-        setEditingTagId(null);
       }
     } finally {
       setTagSaving(false);
+      setTagPickerOpen(false);
+      setTagSearch("");
     }
   }
 
-  async function updateTag(tag: Tag) {
-    const label = editingTagLabel.trim();
-    if (!label || label === tag.definition.label) { setEditingTagId(null); return; }
+  async function createAndAddTag(name: string) {
+    if (tagSaving || !name.trim()) return;
     setTagSaving(true);
     try {
-      // Remove old, add updated
-      await fetch(`/api/conversations/${conv.id}/tags?tagId=${tag.id}`, { method: "DELETE" });
       const res = await fetch(`/api/conversations/${conv.id}/tags`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: tag.definition.type, value: label.toLowerCase().replace(/\s+/g, "_"), label }),
+        body: JSON.stringify({ name: name.trim() }),
       });
       if (res.ok) {
-        const newTag = await res.json();
-        setConv((c) => ({ ...c, tags: [...c.tags.filter((t) => t.id !== tag.id && t.id !== newTag.id), newTag] }));
+        const tag = await res.json();
+        setConv((c) => ({ ...c, tags: [...c.tags.filter((t) => t.id !== tag.id), tag] }));
+        setAllTagDefs((prev) => {
+          if (prev.some((d) => d.id === tag.definition.id)) return prev;
+          return [...prev, tag.definition].sort((a, b) => a.name.localeCompare(b.name));
+        });
       }
     } finally {
       setTagSaving(false);
-      setEditingTagId(null);
+      setTagPickerOpen(false);
+      setTagSearch("");
+    }
+  }
+
+  function openTagPicker() {
+    setTagPickerOpen(true);
+    setTagSearch("");
+    if (allTagDefs.length === 0) {
+      fetch("/api/tags")
+        .then((r) => r.json())
+        .then((data) => setAllTagDefs(Array.isArray(data) ? data : []))
+        .catch(() => {});
     }
   }
 
@@ -562,7 +602,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     await fetch(`/api/conversations/${conv.id}/notes?noteId=${noteId}`, { method: "DELETE" });
   }
 
-  async function switchConversation(id: string) {
+  async function switchConversation(id: number) {
     if (id === conv.id || switchingConv) return;
     setSwitchingConv(true);
     try {
@@ -576,7 +616,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       setTypingAgent(false);
       setUserTypingText("");
       setLastReadByUserAt(data.lastReadByUserAt ?? null);
-      setReplyText("");
+      clearInput();
       setPrivateMode(false);
       clearMedia();
       setHistoryDetail(null);
@@ -587,6 +627,14 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     } finally {
       setSwitchingConv(false);
     }
+  }
+
+  function playNotificationSound() {
+    try {
+      const audio = new Audio("/notification.mp3");
+      audio.volume = 0.6;
+      audio.play().catch(() => {});
+    } catch { /* ignore */ }
   }
 
   async function handleFilePick(file: File) {
@@ -617,30 +665,39 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     setUploadError(null);
   }
 
-  function wrapFormat(marker: string) {
-    const el = inputRef.current;
-    if (!el) return;
-    const { selectionStart: s, selectionEnd: e, value } = el;
-    const selected = value.slice(s, e);
-    const wrapped = marker + (selected || "text") + marker;
-    const newVal = value.slice(0, s) + wrapped + value.slice(e);
-    setReplyText(newVal);
-    setTimeout(() => {
-      el.focus();
-      const pos = selected ? s + wrapped.length : s + marker.length + 4;
-      el.setSelectionRange(pos, pos);
-    }, 0);
+  function syncActiveFormats() {
+    setActiveFormats(new Set(
+      (["bold", "italic", "underline"] as const).filter((cmd) => document.queryCommandState(cmd))
+    ));
+  }
+
+  function applyFormat(cmd: "bold" | "italic" | "underline") {
+    inputRef.current?.focus();
+    document.execCommand(cmd, false);
+    syncActiveFormats();
+  }
+
+  function clearInput() {
+    if (inputRef.current) inputRef.current.innerHTML = "";
+    setIsEmpty(true);
+  }
+
+  function setInputText(text: string) {
+    if (inputRef.current) inputRef.current.innerText = text;
+    setIsEmpty(!text.trim());
   }
 
   async function sendReply() {
-    if ((!replyText.trim() && !pendingMedia) || sending || wsRef.current?.readyState !== WebSocket.OPEN) return;
+    const html = inputRef.current?.innerHTML ?? "";
+    const plain = inputRef.current?.innerText?.trim() ?? "";
+    if ((!plain && !pendingMedia) || sending || !agentWsManager.ready) return;
     setSending(true);
     setUploadError(null);
 
     let mediaId: string | undefined;
     if (pendingMedia) {
       try {
-        const uploaded = await uploadMedia(pendingMedia.file, conv.id);
+        const uploaded = await uploadMedia(pendingMedia.file, String(conv.id));
         mediaId = uploaded.mediaId;
         clearMedia();
       } catch {
@@ -650,12 +707,9 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       }
     }
 
-    const content = replyText.trim();
-    setReplyText("");
+    clearInput();
 
-    wsRef.current.send(
-      JSON.stringify({ type: "send_message", conversationId: conv.id, content, ...(mediaId ? { mediaId } : {}), ...(privateMode ? { isPrivate: true } : {}) })
-    );
+    agentWsManager.send({ type: "send_message", conversationId: String(conv.id), content: html, ...(mediaId ? { mediaId } : {}), ...(privateMode ? { isPrivate: true } : {}) });
     if (privateMode) setPrivateMode(false);
     setSending(false);
 
@@ -670,24 +724,12 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   }
 
   function handleTyping() {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "typing",
-          conversationId: conv.id,
-          isTyping: true,
-        })
-      );
+    if (agentWsManager.ready) {
+      agentWsManager.send({ type: "typing", conversationId: String(conv.id), isTyping: true });
 
       clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        wsRef.current?.send(
-          JSON.stringify({
-            type: "typing",
-            conversationId: conv.id,
-            isTyping: false,
-          })
-        );
+        agentWsManager.send({ type: "typing", conversationId: String(conv.id), isTyping: false });
       }, 2000);
     }
   }
@@ -697,13 +739,13 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     : [];
 
   function applySlashMatch(cr: { id: string; title: string; content: string }) {
-    setReplyText(cr.content);
+    setInputText(cr.content);
     setSlashQuery(null);
     setSlashIndex(0);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (slashQuery !== null && slashMatches.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -732,13 +774,6 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }
 
-  // Group tags by type
-  const tagsByType = conv.tags.reduce<Record<string, Tag[]>>((acc, tag) => {
-    const type = tag.definition.type;
-    if (!acc[type]) acc[type] = [];
-    acc[type].push(tag);
-    return acc;
-  }, {});
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -776,9 +811,12 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   <Avatar name={c.user.name ?? c.user.externalId} src={c.user.avatarUrl} size="sm" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs font-medium text-gray-900 truncate">
-                        {c.user.name ?? c.user.email ?? c.user.externalId}
-                      </span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="text-xs font-medium text-gray-900 truncate">
+                          {c.user.name ?? c.user.email ?? c.user.externalId}
+                        </span>
+                        <span className="text-[9px] font-medium text-gray-400 bg-gray-100 px-1 py-0.5 rounded shrink-0">#{c.id}</span>
+                      </div>
                       {unread > 0 && (
                         <span className="shrink-0 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
                           {unread > 99 ? "99+" : unread}
@@ -819,6 +857,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               <span className="text-sm font-semibold text-gray-900">
                 {conv.user.name ?? conv.user.email ?? conv.user.externalId}
               </span>
+              <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">#{conv.id}</span>
               <Badge variant="muted" size="sm">
                 {categoryLabel(conv.category)}
               </Badge>
@@ -941,7 +980,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                       {cannedResponses.map((cr) => (
                         <button
                           key={cr.id}
-                          onClick={() => { setReplyText(cr.content); setCannedOpen(false); inputRef.current?.focus(); }}
+                          onClick={() => { setInputText(cr.content); setCannedOpen(false); inputRef.current?.focus(); }}
                           className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
                         >
                           <p className="text-xs font-medium text-gray-800">{cr.title}</p>
@@ -1010,17 +1049,22 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
             {/* Formatting toolbar */}
             <div className="flex items-center gap-0.5 mb-1">
-              {[
-                { icon: Bold, marker: "**", title: "Bold" },
-                { icon: Italic, marker: "*", title: "Italic" },
-                { icon: Underline, marker: "__", title: "Underline" },
-              ].map(({ icon: Icon, marker, title }) => (
+              {([
+                { icon: Bold, cmd: "bold", title: "Bold" },
+                { icon: Italic, cmd: "italic", title: "Italic" },
+                { icon: Underline, cmd: "underline", title: "Underline" },
+              ] as { icon: React.ComponentType<{ className?: string }>; cmd: "bold" | "italic" | "underline"; title: string }[]).map(({ icon: Icon, cmd, title }) => (
                 <button
-                  key={marker}
+                  key={cmd}
                   type="button"
                   title={title}
-                  onMouseDown={(e) => { e.preventDefault(); wrapFormat(marker); }}
-                  className="w-6 h-6 rounded flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                  onMouseDown={(e) => { e.preventDefault(); applyFormat(cmd); }}
+                  className={cn(
+                    "w-6 h-6 rounded flex items-center justify-center transition-colors",
+                    activeFormats.has(cmd)
+                      ? "bg-gray-900 text-white"
+                      : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                  )}
                 >
                   <Icon className="w-3.5 h-3.5" />
                 </button>
@@ -1066,34 +1110,50 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 <EyeOff className="w-4 h-4" />
               </button>
 
-              <textarea
-                ref={inputRef}
-                value={replyText}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setReplyText(val);
-                  handleTyping();
-                  if (val.startsWith("/") && !val.includes(" ") && !val.includes("\n")) {
-                    setSlashQuery(val.slice(1));
-                    setSlashIndex(0);
-                  } else {
-                    setSlashQuery(null);
-                  }
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder={privateMode ? "Private message (only agents see this)…" : "Reply to user… (/ for quick replies, Enter to send)"}
-                className={cn(
-                  "flex-1 resize-none bg-transparent text-sm outline-none max-h-32",
-                  privateMode ? "text-orange-900 placeholder:text-orange-300" : "text-gray-900 placeholder:text-gray-400"
+              <div className="relative flex-1 min-w-0">
+                {isEmpty && (
+                  <span className="absolute top-0 left-0 text-sm pointer-events-none select-none leading-relaxed"
+                    style={{ color: privateMode ? "#fca572" : "#9ca3af" }}>
+                    {privateMode ? "Private message (only agents see this)…" : "Reply to user… (/ for quick replies, Enter to send)"}
+                  </span>
                 )}
-                rows={1}
-                style={{ lineHeight: "1.5", minHeight: "1.5rem" }}
-              />
+                <div
+                  ref={inputRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(e) => {
+                    const plain = e.currentTarget.innerText;
+                    setIsEmpty(!plain.trim());
+                    handleTyping();
+                    syncActiveFormats();
+                    if (plain.startsWith("/") && !plain.includes(" ") && !plain.includes("\n")) {
+                      setSlashQuery(plain.slice(1));
+                      setSlashIndex(0);
+                    } else {
+                      setSlashQuery(null);
+                    }
+                  }}
+                  onKeyUp={syncActiveFormats}
+                  onMouseUp={syncActiveFormats}
+                  onSelect={syncActiveFormats}
+                  onKeyDown={handleKeyDown}
+                  onPaste={(e) => {
+                    e.preventDefault();
+                    const text = e.clipboardData.getData("text/plain");
+                    document.execCommand("insertText", false, text);
+                  }}
+                  className={cn(
+                    "text-sm outline-none min-h-[1.5rem] max-h-32 overflow-y-auto leading-relaxed break-words",
+                    privateMode ? "text-orange-900" : "text-gray-900"
+                  )}
+                />
+              </div>
+
               {/* Split send button */}
               <div className="relative flex items-center shrink-0">
                 <button
                   onClick={sendReply}
-                  disabled={sending || (!replyText.trim() && !pendingMedia)}
+                  disabled={sending || (isEmpty && !pendingMedia)}
                   className={cn(
                     "h-8 px-3 flex items-center gap-1.5 rounded-l-lg text-white text-xs font-medium transition-colors disabled:opacity-40",
                     privateMode ? "bg-orange-500 hover:bg-orange-600" : "bg-gray-900 hover:bg-gray-700"
@@ -1104,7 +1164,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 </button>
                 <button
                   onClick={() => setSendDropdownOpen((o) => !o)}
-                  disabled={sending || (!replyText.trim() && !pendingMedia)}
+                  disabled={sending || (isEmpty && !pendingMedia)}
                   className={cn(
                     "h-8 w-6 flex items-center justify-center rounded-r-lg border-l text-white transition-colors disabled:opacity-40",
                     privateMode
@@ -1266,148 +1326,111 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           </EditableField>
         </div>
 
-        {/* Tags — editable */}
+        {/* Tags */}
         <div className="p-5 border-b border-gray-100">
-          <div className="flex items-center gap-1.5 mb-3">
-            <TagIcon className="w-3 h-3 text-gray-400" />
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tags</h3>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <TagIcon className="w-3 h-3 text-gray-400" />
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tags</h3>
+            </div>
+            <button
+              onClick={openTagPicker}
+              className="w-5 h-5 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors"
+              title="Add tag"
+            >
+              <Plus className="w-2.5 h-2.5" />
+            </button>
           </div>
 
-          <div className="space-y-3">
-            {Object.entries(tagsByType).map(([type, tags]: [string, Tag[]]) => (
-              <div key={type}>
-                <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide mb-1.5">
-                  {type.replace(/_/g, " ")}
-                </p>
-                <div className="flex gap-1 flex-wrap items-center">
-                  {tags.map((tag: Tag) => (
-                    <div key={tag.id} className="group relative">
-                      {editingTagId === tag.id ? (
-                        <input
-                          autoFocus
-                          value={editingTagLabel}
-                          onChange={(e) => setEditingTagLabel(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") updateTag(tag);
-                            if (e.key === "Escape") setEditingTagId(null);
-                          }}
-                          onBlur={() => updateTag(tag)}
-                          className="text-[11px] px-2 py-0.5 rounded-md border border-gray-300 outline-none bg-white w-24"
-                        />
-                      ) : (
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            onClick={() => { setEditingTagId(tag.id); setEditingTagLabel(tag.definition.label); }}
-                            className="hover:opacity-70 transition-opacity"
-                            title="Click to edit"
-                          >
-                            {tag.definition.type === "sentiment" ? (
-                              <SentimentBadge sentiment={tag.definition.value} />
-                            ) : (
-                              <Badge variant="default" size="sm">{tag.definition.label}</Badge>
-                            )}
-                          </button>
-                          {tags.length > 1 && (
-                            <button
-                              onClick={() => removeTag(tag.id)}
-                              className="opacity-0 group-hover:opacity-100 w-3.5 h-3.5 rounded-full bg-gray-200 hover:bg-red-100 flex items-center justify-center transition-all"
-                            >
-                              <X className="w-2 h-2 text-gray-500 hover:text-red-500" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {/* Per-type + button */}
-                  {addTagForType === type ? null : (
-                    <button
-                      onClick={() => { setAddTagForType(type); setNewTagLabel(""); }}
-                      className="w-5 h-5 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors"
-                      title={`Add ${type.replace(/_/g, " ")} tag`}
-                    >
-                      <Plus className="w-2.5 h-2.5" />
-                    </button>
-                  )}
-                </div>
-                {/* Inline add form for this type */}
-                {addTagForType === type && (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <input
-                      autoFocus
-                      placeholder="Label…"
-                      value={newTagLabel}
-                      onChange={(e) => setNewTagLabel(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") saveTag(type);
-                        if (e.key === "Escape") { setAddTagForType(null); setNewTagLabel(""); }
-                      }}
-                      className="flex-1 text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-gray-400 placeholder:text-gray-300"
-                    />
-                    <button
-                      onClick={() => saveTag(type)}
-                      disabled={tagSaving || !newTagLabel.trim()}
-                      className="text-xs bg-gray-900 text-white rounded-lg px-2.5 py-1.5 font-medium disabled:opacity-40 hover:bg-gray-700 transition-colors shrink-0"
-                    >
-                      {tagSaving ? "…" : "Add"}
-                    </button>
-                    <button
-                      onClick={() => { setAddTagForType(null); setNewTagLabel(""); }}
-                      className="text-xs text-gray-400 hover:text-gray-700 transition-colors shrink-0"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Add a brand-new tag type */}
-            {addTagForType === "__new__" ? (
-              <div className="space-y-1.5 p-3 bg-gray-50 rounded-xl">
-                <input
-                  autoFocus
-                  placeholder="Type (e.g. issue_type)"
-                  value={addTagNewType}
-                  onChange={(e) => setAddTagNewType(e.target.value)}
-                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-gray-400 placeholder:text-gray-300"
-                />
-                <input
-                  placeholder="Label (e.g. Payment Failed)"
-                  value={newTagLabel}
-                  onChange={(e) => setNewTagLabel(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") saveTag(addTagNewType);
-                    if (e.key === "Escape") { setAddTagForType(null); setAddTagNewType(""); setNewTagLabel(""); }
-                  }}
-                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-gray-400 placeholder:text-gray-300"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => saveTag(addTagNewType)}
-                    disabled={tagSaving || !addTagNewType.trim() || !newTagLabel.trim()}
-                    className="flex-1 text-xs bg-gray-900 text-white rounded-lg py-1.5 font-medium disabled:opacity-40 hover:bg-gray-700 transition-colors"
-                  >
-                    {tagSaving ? "Saving…" : "Add"}
-                  </button>
-                  <button
-                    onClick={() => { setAddTagForType(null); setAddTagNewType(""); setNewTagLabel(""); }}
-                    className="px-3 text-xs text-gray-400 hover:text-gray-700 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={() => { setAddTagForType("__new__"); setNewTagLabel(""); setAddTagNewType(""); }}
-                className="text-[11px] text-gray-400 hover:text-gray-600 flex items-center gap-1 transition-colors"
+          {/* Current tags */}
+          <div className="flex flex-wrap gap-1.5">
+            {conv.tags.map((tag) => (
+              <span
+                key={tag.id}
+                className="group inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-150 transition-colors"
+                style={tag.definition.color ? { backgroundColor: tag.definition.color + "22", color: tag.definition.color } : {}}
               >
-                <Plus className="w-3 h-3" />
-                New tag type
-              </button>
+                {tag.definition.name}
+                <button
+                  onClick={() => removeTag(tag.id)}
+                  className="opacity-0 group-hover:opacity-100 -mr-0.5 rounded-full hover:bg-black/10 transition-all"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </span>
+            ))}
+            {conv.tags.length === 0 && (
+              <p className="text-[11px] text-gray-300">No tags</p>
             )}
           </div>
+
+          {/* Tag picker dropdown */}
+          {tagPickerOpen && (
+            <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+              <div className="px-3 py-2 border-b border-gray-100">
+                <input
+                  autoFocus
+                  placeholder="Search or create tag…"
+                  value={tagSearch}
+                  onChange={(e) => setTagSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { setTagPickerOpen(false); setTagSearch(""); }
+                    if (e.key === "Enter") {
+                      const q = tagSearch.trim();
+                      if (!q) return;
+                      const exact = allTagDefs.find((d) => d.name.toLowerCase() === q.toLowerCase());
+                      if (exact) addTag(exact.id);
+                      else createAndAddTag(q);
+                    }
+                  }}
+                  className="w-full text-xs outline-none placeholder:text-gray-300 bg-transparent"
+                />
+              </div>
+              <div className="max-h-48 overflow-y-auto py-1">
+                {allTagDefs
+                  .filter((d) => !tagSearch || d.name.toLowerCase().includes(tagSearch.toLowerCase()))
+                  .map((def) => {
+                    const already = conv.tags.some((t) => t.definition.id === def.id);
+                    return (
+                      <button
+                        key={def.id}
+                        onClick={() => addTag(def.id)}
+                        disabled={already}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default transition-colors"
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: def.color ?? "#d1d5db" }}
+                        />
+                        {def.name}
+                        {already && <span className="ml-auto text-gray-300">added</span>}
+                      </button>
+                    );
+                  })}
+                {tagSearch.trim() && !allTagDefs.some((d) => d.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+                  <button
+                    onClick={() => createAndAddTag(tagSearch)}
+                    disabled={tagSaving}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 text-gray-500 transition-colors"
+                  >
+                    <Plus className="w-3 h-3 shrink-0" />
+                    Create &ldquo;{tagSearch.trim()}&rdquo;
+                  </button>
+                )}
+                {allTagDefs.length === 0 && !tagSearch && (
+                  <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>
+                )}
+              </div>
+              <div className="px-3 py-1.5 border-t border-gray-100">
+                <button
+                  onClick={() => { setTagPickerOpen(false); setTagSearch(""); }}
+                  className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Private notes */}
@@ -1497,9 +1520,12 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                       className="w-full text-left rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors px-3 py-2.5"
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
-                          {categoryLabel(c.category)}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                            {categoryLabel(c.category)}
+                          </span>
+                          <span className="text-[9px] font-medium text-gray-400 bg-gray-100 px-1 py-0.5 rounded">#{c.id}</span>
+                        </div>
                         <StatusBadge status={c.status} />
                       </div>
                       {lastMsg ? (
@@ -1758,12 +1784,7 @@ function MessageBubble({ message: msg }: { message: Message }) {
         )}
 
         {msg.content ? (
-          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-            {renderFormatted(msg.content)}
-            {msg.isStreaming && (
-              <span className="inline-block w-0.5 h-3.5 bg-current ml-0.5 animate-pulse" />
-            )}
-          </p>
+          <MessageContent content={msg.content} isStreaming={msg.isStreaming} />
         ) : !msg.media ? (
           <p className="text-sm italic opacity-50">📎 Attachment</p>
         ) : null}

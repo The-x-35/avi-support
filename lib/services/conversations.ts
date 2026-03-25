@@ -9,9 +9,7 @@ export interface ConversationFilters {
   assignedAgentId?: string | null;
   userId?: string;
   search?: string;
-  tagType?: string;
-  tagValue?: string;
-  sentiment?: string;
+  tagName?: string;
   dateFrom?: Date;
   dateTo?: Date;
   page?: number;
@@ -27,8 +25,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     assignedAgentId,
     userId,
     search,
-    tagType,
-    tagValue,
+    tagName,
     dateFrom,
     dateTo,
     page = 1,
@@ -62,19 +59,9 @@ export async function getConversations(filters: ConversationFilters = {}) {
     };
   }
 
-  // Tag filters
-  if (tagType && tagValue) {
-    where.tags = {
-      some: {
-        definition: { type: tagType, value: tagValue },
-      },
-    };
-  } else if (tagValue) {
-    where.tags = {
-      some: {
-        definition: { value: tagValue },
-      },
-    };
+  // Tag filter
+  if (tagName) {
+    where.tags = { some: { definition: { name: tagName } } };
   }
 
   // Full-text search on subject + recent message content
@@ -116,38 +103,45 @@ export async function getConversations(filters: ConversationFilters = {}) {
   return { conversations, total, page, limit };
 }
 
-export async function getConversationById(id: string) {
-  // Clean up messages stuck as streaming (WS server crash mid-response)
-  // Any message still streaming after 5 minutes is considered abandoned
-  await prisma.message.updateMany({
-    where: {
-      conversationId: id,
-      isStreaming: true,
-      createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
-    },
-    data: { isStreaming: false },
-  });
-
-  return prisma.conversation.findUnique({
-    where: { id },
-    include: {
-      user: true,
-      assignedAgent: { select: { id: true, name: true, avatarUrl: true, email: true } },
-      tags: { include: { definition: true } },
-      messages: {
-        orderBy: { createdAt: "asc" },
-        include: {
-          agent: { select: { id: true, name: true, avatarUrl: true } },
-          media: true,
-        },
+export async function getConversationById(id: number) {
+  // Run stale-streaming cleanup in parallel with the main fetch instead of blocking it
+  const [, conversation] = await Promise.all([
+    prisma.message.updateMany({
+      where: {
+        conversationId: id,
+        isStreaming: true,
+        createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
       },
-      ticket: true,
-    },
-  });
+      data: { isStreaming: false },
+    }),
+    prisma.conversation.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true, name: true, email: true, phone: true,
+            avatarUrl: true, externalId: true, createdAt: true,
+          },
+        },
+        assignedAgent: { select: { id: true, name: true, avatarUrl: true, email: true } },
+        tags: { include: { definition: true } },
+        messages: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            agent: { select: { id: true, name: true, avatarUrl: true } },
+            media: true,
+          },
+        },
+        ticket: true,
+      },
+    }),
+  ]);
+
+  return conversation;
 }
 
 export async function updateConversationControl(
-  id: string,
+  id: number,
   action: "pause_ai" | "resume_ai" | "takeover" | "resolve" | "escalate",
   agentId?: string
 ) {

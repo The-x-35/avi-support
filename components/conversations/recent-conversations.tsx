@@ -55,6 +55,7 @@ export async function RecentConversations() {
                     <span className="text-sm font-medium text-gray-900 truncate">
                       {displayName}
                     </span>
+                    <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
                     {conv.isAiPaused && (
                       <span className="text-[10px] font-medium bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded shrink-0">
                         Agent

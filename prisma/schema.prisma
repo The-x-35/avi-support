@@ -7,12 +7,14 @@ datasource db {
 }
 
 model Agent {
-  id              String           @id @default(uuid())
-  email           String           @unique
-  name            String
-  avatarUrl       String?
-  role            Role             @default(AGENT)
-  isActive        Boolean          @default(true)
+  id                  String           @id @default(uuid())
+  email               String           @unique
+  name                String
+  avatarUrl           String?
+  role                Role             @default(AGENT)
+  isActive            Boolean          @default(true)
+  status              AgentStatus      @default(ONLINE)
+  maxConcurrentChats  Int              @default(5)
   googleId        String?          @unique
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -44,7 +46,7 @@ model CannedResponse {
 
 model Note {
   id             String       @id @default(uuid())
-  conversationId String
+  conversationId Int
   agentId        String
   content        String
   createdAt      DateTime     @default(now())
@@ -86,7 +88,7 @@ model EndUser {
 }
 
 model Conversation {
-  id              String             @id @default(uuid())
+  id              Int                @id @default(autoincrement())
   userId          String
   category        Category           @default(GENERAL)
   status          ConversationStatus @default(OPEN)
@@ -94,6 +96,7 @@ model Conversation {
   assignedAgentId String?
   priority        Priority           @default(MEDIUM)
   subject         String?
+  queuedAt        DateTime?
   lastMessageAt      DateTime?
   lastReadByUserAt   DateTime?
   createdAt          DateTime           @default(now())
@@ -126,7 +129,7 @@ model Media {
 
 model Message {
   id             String       @id @default(uuid())
-  conversationId String
+  conversationId Int
   senderType     SenderType
   senderId       String?
   content        String
@@ -145,29 +148,19 @@ model Message {
 
 model TagDefinition {
   id        String   @id @default(uuid())
-  type      String
-  value     String
-  label     String
+  name      String   @unique
   color     String?
-  isSystem  Boolean  @default(false)
-  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   tags      Tag[]
-
-  @@unique([type, value])
-  @@index([type])
 }
 
 model Tag {
   id             String        @id @default(uuid())
-  conversationId String
+  conversationId Int
   definitionId   String
-  confidence     Float?
-  source         TagSource     @default(AI)
   createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
   conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  definition     TagDefinition @relation(fields: [definitionId], references: [id])
+  definition     TagDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
 
   @@unique([conversationId, definitionId])
   @@index([conversationId])
@@ -207,9 +200,12 @@ model Ticket {
 }
 
 model WorkspaceSetting {
-  id        String   @id @default("default")
-  aiEnabled Boolean  @default(true)
-  updatedAt DateTime @updatedAt
+  id                   String   @id @default("default")
+  aiEnabled            Boolean  @default(true)
+  queueMessage         String?
+  ticketMessage        String?
+  queueTimeoutMinutes  Int      @default(5)
+  updatedAt            DateTime @updatedAt
 }
 
 model Notification {
@@ -218,7 +214,7 @@ model Notification {
   type           NotificationType
   title          String
   body           String
-  conversationId String?
+  conversationId Int?
   isRead         Boolean          @default(false)
   createdAt      DateTime         @default(now())
   agent          Agent            @relation(fields: [agentId], references: [id], onDelete: Cascade)
@@ -251,6 +247,12 @@ enum Role {
   AGENT
 }
 
+enum AgentStatus {
+  ONLINE
+  AWAY
+  OFFLINE
+}
+
 enum SenderType {
   USER
   AI
@@ -279,12 +281,6 @@ enum Priority {
   MEDIUM
   HIGH
   CRITICAL
-}
-
-enum TagSource {
-  AI
-  AGENT
-  SYSTEM
 }
 
 enum TicketStatus {

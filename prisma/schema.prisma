@@ -207,12 +207,14 @@ model Ticket {
 }
 
 model WorkspaceSetting {
-  id                   String   @id @default("default")
-  aiEnabled            Boolean  @default(true)
-  queueMessage         String?
-  ticketMessage        String?
-  queueTimeoutMinutes  Int      @default(5)
-  updatedAt            DateTime @updatedAt
+  id                      String   @id @default("default")
+  aiEnabled               Boolean  @default(true)
+  queueMessage            String?
+  ticketMessage           String?
+  queueTimeoutMinutes     Int      @default(5)
+  agentInactivityEnabled  Boolean  @default(true)
+  agentInactivityHours    Int      @default(3)
+  updatedAt               DateTime @updatedAt
 }
 
 model Notification {

@@ -108,6 +108,12 @@ const clients = new Map<WebSocket, AuthenticatedClient>();
 const rooms = new Map<string, Set<WebSocket>>();
 // agentId → Set of WebSocket connections (personal notification room)
 const agentRooms = new Map<string, Set<WebSocket>>();
+// agentId → last activity timestamp (ms)
+const agentLastActivity = new Map<string, number>();
+
+function touchAgent(agentId: string) {
+  agentLastActivity.set(agentId, Date.now());
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -445,6 +451,11 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
   const client = clients.get(ws);
 
+  // Update last-activity timestamp for any agent message
+  if (client?.role === "agent" && client.agentId) {
+    touchAgent(client.agentId);
+  }
+
   switch (event.type) {
     case "auth": {
       try {
@@ -457,6 +468,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
             rooms: new Set(),
           });
           joinAgentRoom(ws, payload.agentId);
+          touchAgent(payload.agentId);
         } else {
           // User auth: token is externalUserId (simplified — production would verify app JWT)
           clients.set(ws, {
@@ -852,9 +864,7 @@ const wss = new WebSocketServer({
   },
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`[ws] Server listening on port ${PORT}`);
-});
+httpServer.listen(PORT, () => {});
 
 wss.on("connection", (ws: WebSocket) => {
   // Initialize unauthenticated client entry
@@ -880,7 +890,7 @@ wss.on("connection", (ws: WebSocket) => {
 
 // Queue timeout checker — promote stale queued conversations to tickets
 const DEFAULT_TICKET_MESSAGE =
-  "We have created support ticket #{ticketId} for your request. Our team will follow up with you as soon as possible.";
+  "Sorry, all our agents are busy at the moment. Your ticket has been created with the number #{ticketId}. We'll get back to you as soon as possible.";
 
 setInterval(async () => {
   try {
@@ -919,9 +929,8 @@ setInterval(async () => {
         data: { queuedAt: null, ticketId: ticket.id },
       });
 
-      const ticketShortId = ticket.id.slice(-6).toUpperCase();
       const rawMsg = setting.ticketMessage?.trim() || DEFAULT_TICKET_MESSAGE;
-      const ticketMsg = rawMsg.replace("{ticketId}", ticketShortId);
+      const ticketMsg = rawMsg.replace("{ticketId}", String(conv.id));
 
       const msg = await prisma.message.create({
         data: { conversationId: conv.id, senderType: "AI", content: ticketMsg, isStreaming: false },
@@ -959,5 +968,35 @@ setInterval(() => {
     }
   }
 }, 30_000);
+
+// Agent inactivity checker — set ONLINE/AWAY agents to OFFLINE after configurable inactivity
+setInterval(async () => {
+  try {
+    const setting = await getWorkspaceSetting();
+    if (!setting.agentInactivityEnabled) return;
+
+    const thresholdMs = setting.agentInactivityHours * 60 * 60 * 1000;
+    const now = Date.now();
+    const activeAgents = await prisma.agent.findMany({
+      where: { status: { in: ["ONLINE", "AWAY"] } },
+      select: { id: true },
+    });
+
+    const toSetOffline = activeAgents.filter(({ id }) => {
+      const lastSeen = agentLastActivity.get(id);
+      return !lastSeen || now - lastSeen > thresholdMs;
+    });
+
+    if (toSetOffline.length > 0) {
+      const ids = toSetOffline.map((a) => a.id);
+      await prisma.agent.updateMany({
+        where: { id: { in: ids } },
+        data: { status: "OFFLINE" },
+      });
+    }
+  } catch (err) {
+    console.error("[ws] Inactivity check error:", err);
+  }
+}, 15 * 60 * 1000); // run every 15 minutes
 
 export {};

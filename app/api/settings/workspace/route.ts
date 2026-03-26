@@ -21,7 +21,7 @@ export async function PATCH(request: NextRequest) {
   if (roleErr) return roleErr;
 
   const body = await request.json();
-  const { aiEnabled, queueMessage, ticketMessage, queueTimeoutMinutes } = body;
+  const { aiEnabled, queueMessage, ticketMessage, queueTimeoutMinutes, agentInactivityEnabled, agentInactivityHours } = body;
 
   const data: Record<string, unknown> = {};
   if (typeof aiEnabled === "boolean") data.aiEnabled = aiEnabled;
@@ -29,6 +29,11 @@ export async function PATCH(request: NextRequest) {
   if (typeof ticketMessage === "string") data.ticketMessage = ticketMessage.slice(0, 1000);
   if (typeof queueTimeoutMinutes === "number" && queueTimeoutMinutes >= 1) {
     data.queueTimeoutMinutes = Math.min(queueTimeoutMinutes, 60);
+  }
+  if (typeof agentInactivityEnabled === "boolean") data.agentInactivityEnabled = agentInactivityEnabled;
+  const VALID_INACTIVITY_HOURS = new Set([1, 2, 3, 4, 6, 8]);
+  if (typeof agentInactivityHours === "number" && VALID_INACTIVITY_HOURS.has(agentInactivityHours)) {
+    data.agentInactivityHours = agentInactivityHours;
   }
 
   if (Object.keys(data).length === 0) {

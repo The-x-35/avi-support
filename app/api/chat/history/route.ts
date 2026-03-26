@@ -17,7 +17,6 @@ export const GET = withTiming("GET /api/chat/history", async (request: NextReque
   const conversations = await prisma.conversation.findMany({
     where: {
       userId: user.id,
-      status: { not: "CLOSED" },
       messages: {
         some: {
           isStreaming: false,
@@ -26,7 +25,7 @@ export const GET = withTiming("GET /api/chat/history", async (request: NextReque
       },
     },
     orderBy: { lastMessageAt: "desc" },
-    take: 10,
+    take: 20,
     select: {
       id: true,
       category: true,

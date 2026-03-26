@@ -35,15 +35,30 @@ export async function PATCH(request: NextRequest) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
-  const { status } = await request.json();
-  if (!status || !VALID_STATUSES.has(status)) {
-    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+  const body = await request.json();
+  const data: Record<string, unknown> = {};
+
+  if (body.status !== undefined) {
+    if (!VALID_STATUSES.has(body.status)) {
+      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
+    data.status = body.status;
+  }
+
+  if (body.name !== undefined) {
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 128) : null;
+    if (!name) return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
+    data.name = name;
+  }
+
+  if (Object.keys(data).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
 
   const agent = await prisma.agent.update({
     where: { id: auth.payload.agentId },
-    data: { status },
-    select: { id: true, status: true },
+    data,
+    select: { id: true, name: true, status: true },
   });
 
   return NextResponse.json(agent);

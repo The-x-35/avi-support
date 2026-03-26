@@ -50,13 +50,14 @@ export async function POST(req: NextRequest) {
 
     const { fileName, mimeType, fileSize, conversationId } = await req.json();
 
-    if (!fileName || !mimeType || typeof fileSize !== "number" || !conversationId) {
+    const conversationIdInt = parseInt(conversationId, 10);
+    if (!fileName || !mimeType || typeof fileSize !== "number" || !conversationId || isNaN(conversationIdInt)) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
     // Verify the conversation exists and is active (not closed/resolved)
     const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
+      where: { id: conversationIdInt },
       select: { id: true, status: true },
     });
 

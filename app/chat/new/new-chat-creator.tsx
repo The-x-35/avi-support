@@ -270,16 +270,16 @@ export function NewChatCreator({
                           <p className="text-[13px] leading-snug truncate text-gray-600">
                             {lastMsg ? lastMsg.content : "No messages yet"}
                           </p>
-                          {c.status !== "OPEN" && (
-                            <span className={cn(
-                              "inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full",
-                              c.status === "RESOLVED" ? "bg-emerald-50 text-emerald-600"
-                                : c.status === "ESCALATED" ? "bg-amber-50 text-amber-600"
-                                : "bg-gray-100 text-gray-500"
-                            )}>
-                              {c.status.charAt(0) + c.status.slice(1).toLowerCase()}
-                            </span>
-                          )}
+                          <span className={cn(
+                            "inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full",
+                            c.status === "OPEN" ? "bg-blue-50 text-blue-600"
+                              : c.status === "PENDING" ? "bg-yellow-50 text-yellow-600"
+                              : c.status === "RESOLVED" ? "bg-emerald-50 text-emerald-600"
+                              : c.status === "ESCALATED" ? "bg-amber-50 text-amber-600"
+                              : "bg-gray-100 text-gray-500"
+                          )}>
+                            {c.status.charAt(0) + c.status.slice(1).toLowerCase()}
+                          </span>
                         </button>
                       );
                     })}

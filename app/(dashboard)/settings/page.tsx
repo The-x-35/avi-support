@@ -8,13 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import { AdminPanel } from "./admin-panel";
 import { AIToggle } from "./ai-toggle";
 import { QueueSettings } from "./queue-settings";
+import { ProfileEditor } from "./profile-editor";
+import { InactivitySettings } from "./inactivity-settings";
 import { Tag, MessageSquareText, ChevronRight } from "lucide-react";
 
 const DEFAULT_QUEUE_MESSAGE =
   "All our agents are currently busy. You have been added to the queue and someone will be with you as soon as possible.";
 
 const DEFAULT_TICKET_MESSAGE =
-  "We have created support ticket #{ticketId} for your request. Our team will follow up with you as soon as possible.";
+  "Sorry, all our agents are busy at the moment. Your ticket has been created with the number #{ticketId}. We'll get back to you as soon as possible.";
 
 export default async function SettingsPage() {
   const session = await getSession();
@@ -26,6 +28,13 @@ export default async function SettingsPage() {
 
   const isAdmin = session?.role === "ADMIN";
 
+  const currentAgent = session?.agentId
+    ? await prisma.agent.findUnique({
+        where: { id: session.agentId },
+        select: { id: true, name: true, email: true, avatarUrl: true, role: true },
+      })
+    : null;
+
   const workspaceSetting = await prisma.workspaceSetting.upsert({
     where: { id: "default" },
     create: { id: "default", aiEnabled: true },
@@ -36,6 +45,17 @@ export default async function SettingsPage() {
     <div className="flex flex-col h-full overflow-hidden">
       <Header title="Settings" subtitle="Team and configuration" />
       <div className="flex-1 overflow-y-auto p-6 max-w-2xl space-y-6">
+        {/* Profile */}
+        {currentAgent && (
+          <ProfileEditor
+            agentId={currentAgent.id}
+            initialName={currentAgent.name}
+            email={currentAgent.email}
+            avatarUrl={currentAgent.avatarUrl}
+            role={currentAgent.role}
+          />
+        )}
+
         {/* Team */}
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
           <div className="px-5 py-4 border-b border-gray-50">
@@ -93,6 +113,12 @@ export default async function SettingsPage() {
             initialQueueMessage={workspaceSetting.queueMessage ?? DEFAULT_QUEUE_MESSAGE}
             initialTicketMessage={workspaceSetting.ticketMessage ?? DEFAULT_TICKET_MESSAGE}
             initialTimeoutMinutes={workspaceSetting.queueTimeoutMinutes}
+          />
+        )}
+        {isAdmin && (
+          <InactivitySettings
+            initialEnabled={workspaceSetting.agentInactivityEnabled}
+            initialHours={workspaceSetting.agentInactivityHours}
           />
         )}
         {isAdmin && <AdminPanel agents={agents} currentAgentId={session?.agentId ?? ""} />}

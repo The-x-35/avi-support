@@ -7,12 +7,12 @@ import Link from "next/link";
 import { CreditCard, User, Receipt, ShieldCheck, HelpCircle, MessageSquare, Send, ChevronRight, FileText } from "lucide-react";
 
 const CATEGORIES = [
-  { value: "CARDS", label: "Cards", icon: CreditCard, iconWrap: "bg-blue-50", iconColor: "text-blue-600" },
-  { value: "ACCOUNT", label: "Account", icon: User, iconWrap: "bg-violet-50", iconColor: "text-violet-600" },
-  { value: "SPENDS", label: "Spends", icon: Receipt, iconWrap: "bg-emerald-50", iconColor: "text-emerald-600" },
-  { value: "KYC", label: "KYC", icon: ShieldCheck, iconWrap: "bg-amber-50", iconColor: "text-amber-600" },
-  { value: "GENERAL", label: "General", icon: HelpCircle, iconWrap: "bg-gray-100", iconColor: "text-gray-700" },
-  { value: "OTHER", label: "Other", icon: MessageSquare, iconWrap: "bg-rose-50", iconColor: "text-rose-600" },
+  { value: "CARDS", label: "Cards", icon: CreditCard, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
+  { value: "ACCOUNT", label: "Account", icon: User, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
+  { value: "SPENDS", label: "Spends", icon: Receipt, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
+  { value: "KYC", label: "KYC", icon: ShieldCheck, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
+  { value: "GENERAL", label: "General", icon: HelpCircle, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
+  { value: "OTHER", label: "Other", icon: MessageSquare, iconWrap: "bg-gray-100", iconColor: "text-gray-900" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -36,27 +36,51 @@ export function CategoryPicker({ userId }: { userId: string }) {
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [message, setMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Keep a promise ref so concurrent clicks await the same in-flight fetch
+  const historyPromiseRef = useRef<Promise<PastConv[]> | null>(null);
 
   useEffect(() => {
-    // Pre-warm the WS connection so it's ready before the user navigates to a chat
     userWsManager.init(userId);
 
-    fetch(`/api/chat/history?userId=${encodeURIComponent(userId)}`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((d) =>
-        setPastConvs(Array.isArray(d) ? d : Array.isArray(d?.conversations) ? d.conversations : [])
-      )
-      .catch(() => {});
+    const promise = fetch(`/api/chat/history?userId=${encodeURIComponent(userId)}`)
+      .then((r) => r.ok ? r.json() : { conversations: [] })
+      .then((d): PastConv[] => Array.isArray(d) ? d : Array.isArray(d?.conversations) ? d.conversations : []);
+
+    historyPromiseRef.current = promise;
+
+    promise.then((convs) => {
+      setPastConvs(convs);
+    }).catch(() => {});
   }, [userId]);
 
-  function handleCategory(category: string) {
+  async function getOpenConv(): Promise<PastConv | null> {
+    // Use already-loaded list, or wait for the in-flight fetch if still loading
+    const convs = pastConvs.length > 0
+      ? pastConvs
+      : await (historyPromiseRef.current ?? Promise.resolve([]));
+    return convs.find(
+      (c) => (c.status === "OPEN" || c.status === "PENDING") && c.messages.length > 0
+    ) ?? null;
+  }
+
+  async function handleCategory(category: string) {
     setLoading(category);
+    const open = await getOpenConv();
+    if (open) {
+      router.push(`/chat/${open.id}?userId=${encodeURIComponent(userId)}`);
+      return;
+    }
     router.push(`/chat/new?userId=${encodeURIComponent(userId)}&category=${category}`);
   }
 
-  function handleSendMessage() {
+  async function handleSendMessage() {
     const text = message.trim();
     if (!text) return;
+    const open = await getOpenConv();
+    if (open) {
+      router.push(`/chat/${open.id}?userId=${encodeURIComponent(userId)}&initialMessage=${encodeURIComponent(text)}`);
+      return;
+    }
     router.push(
       `/chat/new?userId=${encodeURIComponent(userId)}&category=GENERAL&initialMessage=${encodeURIComponent(text)}`
     );
@@ -149,19 +173,21 @@ export function CategoryPicker({ userId }: { userId: string }) {
                           {lastMsg.content}
                         </p>
                       )}
-                      {!isOpen && (
-                        <span
-                          className={`inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                            isResolved
-                              ? "bg-emerald-50 text-emerald-600"
-                              : isEscalated
-                              ? "bg-amber-50 text-amber-600"
-                              : "bg-gray-100 text-gray-500"
-                          }`}
-                        >
-                          {STATUS_LABEL[conv.status] ?? conv.status}
-                        </span>
-                      )}
+                      <span
+                        className={`inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                          isOpen
+                            ? "bg-blue-50 text-blue-600"
+                            : isResolved
+                            ? "bg-emerald-50 text-emerald-600"
+                            : isEscalated
+                            ? "bg-amber-50 text-amber-600"
+                            : conv.status === "PENDING"
+                            ? "bg-yellow-50 text-yellow-600"
+                            : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {STATUS_LABEL[conv.status] ?? conv.status}
+                      </span>
                     </Link>
                   );
                 })}

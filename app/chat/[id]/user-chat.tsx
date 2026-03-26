@@ -578,8 +578,8 @@ export function UserChat({
     await sendMessageWithContent(text);
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  function handleKeyDown(_e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter adds a newline; send only via the button
   }
 
   async function openHistory() {
@@ -740,18 +740,20 @@ export function UserChat({
                           )}>
                             {lastMsg ? lastMsg.content : "No messages yet"}
                           </p>
-                          {c.status !== "OPEN" && (
-                            <span className={cn(
-                              "inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full",
-                              c.status === "RESOLVED"
-                                ? isActive ? "bg-emerald-900 text-emerald-300" : "bg-emerald-50 text-emerald-600"
-                                : c.status === "ESCALATED"
-                                ? isActive ? "bg-amber-900 text-amber-300" : "bg-amber-50 text-amber-600"
-                                : isActive ? "bg-gray-700 text-gray-300" : "bg-gray-100 text-gray-500"
-                            )}>
-                              {c.status.charAt(0) + c.status.slice(1).toLowerCase()}
-                            </span>
-                          )}
+                          <span className={cn(
+                            "inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full",
+                            c.status === "OPEN"
+                              ? isActive ? "bg-blue-900 text-blue-300" : "bg-blue-50 text-blue-600"
+                              : c.status === "PENDING"
+                              ? isActive ? "bg-yellow-900 text-yellow-300" : "bg-yellow-50 text-yellow-600"
+                              : c.status === "RESOLVED"
+                              ? isActive ? "bg-emerald-900 text-emerald-300" : "bg-emerald-50 text-emerald-600"
+                              : c.status === "ESCALATED"
+                              ? isActive ? "bg-amber-900 text-amber-300" : "bg-amber-50 text-amber-600"
+                              : isActive ? "bg-gray-700 text-gray-300" : "bg-gray-100 text-gray-500"
+                          )}>
+                            {c.status.charAt(0) + c.status.slice(1).toLowerCase()}
+                          </span>
                         </button>
                       );
                     })}
@@ -796,7 +798,7 @@ export function UserChat({
             transition={BUBBLE_SPRING}
             style={{ originX: 0, originY: 1 }}
           >
-            <div className="max-w-[82%]">
+            <div className="max-w-[88%]">
               <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
                 <p className="text-[15px] text-gray-800 leading-relaxed">Hi! I&apos;m Avi, your support assistant. How can I help you today?</p>
               </div>
@@ -836,7 +838,7 @@ export function UserChat({
               transition={BUBBLE_SPRING}
               style={{ originX: 0, originY: 1 }}
             >
-              <div className="max-w-[82%]">
+              <div className="max-w-[88%]">
                 <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
                   {displayedLen === 0 ? (
                     <span className="text-[15px] text-gray-400 italic">Avi is thinking…</span>
@@ -1020,7 +1022,7 @@ export function UserChat({
               disabled={false}
               rows={1}
               className="flex-1 min-w-0 bg-transparent text-gray-900 placeholder:text-gray-400 outline-none ring-0 resize-none leading-relaxed disabled:cursor-not-allowed focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
-              style={{ minHeight: "1.5rem", maxHeight: "7rem", outline: "none", boxShadow: "none", fontSize: "16px" }}
+              style={{ minHeight: "1.5rem", maxHeight: "12rem", outline: "none", boxShadow: "none", fontSize: "16px" }}
             />
             <motion.button
               onClick={sendMessage}
@@ -1087,7 +1089,7 @@ function ChatBubble({ message: msg, isFresh = false }: { message: Message; isFre
         dragConstraints={{ left: -75, right: 0 }}
         dragElastic={0.12}
         style={isUser ? { x: dragX } : undefined}
-        className={cn("flex items-end gap-2 max-w-[82%]", isUser && "flex-row-reverse")}
+        className={cn("flex items-end gap-2 max-w-[88%]", isUser && "flex-row-reverse")}
       >
 
         <div

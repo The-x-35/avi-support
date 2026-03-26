@@ -15,6 +15,8 @@ const DEFAULT: WorkspaceSetting = {
   queueMessage: null,
   ticketMessage: null,
   queueTimeoutMinutes: 5,
+  agentInactivityEnabled: true,
+  agentInactivityHours: 3,
   updatedAt: new Date(0),
 };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, Plus, Trash2 } from "lucide-react";
@@ -15,10 +15,7 @@ const FIELD_OPTIONS = [
   { value: "status", label: "Status" },
   { value: "category", label: "Category" },
   { value: "priority", label: "Priority" },
-  { value: "sentiment", label: "Sentiment" },
-  { value: "issue_type", label: "Issue Type" },
-  { value: "product_area", label: "Product Area" },
-  { value: "resolution_status", label: "Resolution" },
+  { value: "tag", label: "Tag" },
   { value: "isAiPaused", label: "AI Paused" },
   { value: "createdAt", label: "Created Date" },
 ];
@@ -27,10 +24,6 @@ const VALUE_OPTIONS: Record<string, string[]> = {
   status: ["OPEN", "PENDING", "RESOLVED", "ESCALATED", "CLOSED"],
   category: ["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"],
   priority: ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
-  sentiment: ["positive", "neutral", "frustrated", "angry"],
-  issue_type: ["card_decline", "kyc_stuck", "transaction_dispute", "login_issue", "general_query"],
-  product_area: ["cards", "account", "spends", "kyc", "borrow", "grow"],
-  resolution_status: ["resolved_by_ai", "escalated", "pending", "unresolved"],
   isAiPaused: ["true", "false"],
 };
 
@@ -59,6 +52,14 @@ export function SegmentBuilder({ onClose, onSaved, editSegment }: SegmentBuilder
     editSegment?.filters.conditions ?? [{ field: "status", operator: "eq", value: "OPEN" }]
   );
   const [saving, setSaving] = useState(false);
+  const [tagOptions, setTagOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/tags")
+      .then((r) => r.ok ? r.json() : [])
+      .then((tags: { name: string }[]) => setTagOptions(tags.map((t) => t.name)))
+      .catch(() => {});
+  }, []);
 
   const isEdit = !!editSegment;
 
@@ -76,10 +77,12 @@ export function SegmentBuilder({ onClose, onSaved, editSegment }: SegmentBuilder
         if (idx !== i) return c;
         const updated = { ...c, [key]: val };
         if (key === "field") {
-          // Reset operator and value when field changes
           if (val === "createdAt") {
             updated.operator = "gte";
             updated.value = new Date().toISOString().split("T")[0];
+          } else if (val === "tag") {
+            updated.operator = "eq";
+            updated.value = tagOptions[0] ?? "";
           } else {
             updated.operator = "eq";
             updated.value = VALUE_OPTIONS[val]?.[0] ?? "";
@@ -229,9 +232,12 @@ export function SegmentBuilder({ onClose, onSaved, editSegment }: SegmentBuilder
                     onChange={(e) => updateCondition(i, "value", e.target.value)}
                     className="flex-1 h-8 px-2 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
-                    {(VALUE_OPTIONS[cond.field] ?? []).map((v) => (
+                    {(cond.field === "tag" ? tagOptions : VALUE_OPTIONS[cond.field] ?? []).map((v) => (
                       <option key={v} value={v}>{v}</option>
                     ))}
+                    {cond.field === "tag" && tagOptions.length === 0 && (
+                      <option value="" disabled>No tags found</option>
+                    )}
                   </select>
                 )}
 

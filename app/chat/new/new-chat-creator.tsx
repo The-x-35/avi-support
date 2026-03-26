@@ -68,7 +68,7 @@ export function NewChatCreator({
     fetch("/api/chat/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, category, name }),
+      body: JSON.stringify({ category, name }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -81,7 +81,7 @@ export function NewChatCreator({
         window.history.replaceState(null, "", url.toString());
       })
       .catch(() => {
-        router.replace(`/chat?userId=${encodeURIComponent(userId)}`);
+        router.replace("/chat");
       });
   }, [userId, category, name, router]);
 
@@ -132,7 +132,7 @@ export function NewChatCreator({
     if (history !== null) return;
     setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/chat/history?userId=${encodeURIComponent(userId)}`);
+      const res = await fetch("/api/chat/history");
       const data = await res.json();
       setHistory(data.conversations ?? []);
     } catch {
@@ -184,7 +184,7 @@ export function NewChatCreator({
       >
         <div className="flex items-center justify-between px-2 py-2">
           <button
-            onClick={() => router.push(`/chat?userId=${encodeURIComponent(userId)}`)}
+            onClick={() => router.push("/chat")}
             className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400 active:bg-gray-100 transition-colors"
             style={{ touchAction: "manipulation" }}
           >
@@ -259,7 +259,7 @@ export function NewChatCreator({
                           key={c.id}
                           onClick={() => {
                             setHistoryOpen(false);
-                            router.push(`/chat/${c.id}?userId=${encodeURIComponent(userId)}`);
+                            router.push(`/chat/${c.id}`);
                           }}
                           className="w-full text-left rounded-2xl px-4 py-3.5 transition-colors active:scale-[0.98] bg-gray-50 active:bg-gray-100"
                         >

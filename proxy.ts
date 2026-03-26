@@ -1,10 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAccessToken, getRefreshToken } from "@/lib/auth/cookies";
 import { verifyAccessToken } from "@/lib/auth/jwt";
+import { jwtVerify } from "jose";
+import { CHAT_SESSION_COOKIE, CHAT_TOKEN_EXPIRY_SECONDS } from "@/lib/auth/chat-token";
+
+function getChatSecret(): Uint8Array {
+  return new TextEncoder().encode(process.env.CHAT_TOKEN_SECRET ?? "");
+}
 
 const PUBLIC_PATHS = [
   "/login",
-  "/chat",
   "/api/auth/google",
   "/api/auth/callback",
   "/api/auth/refresh",
@@ -16,8 +21,53 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
 }
 
+async function handleChatAuth(request: NextRequest): Promise<NextResponse | null> {
+  const { pathname } = request.nextUrl;
+  if (!pathname.startsWith("/chat")) return null;
+  if (pathname === "/chat/error") return NextResponse.next();
+
+  const token = request.nextUrl.searchParams.get("token");
+  const sessionCookie = request.cookies.get(CHAT_SESSION_COOKIE)?.value;
+
+  if (token) {
+    try {
+      await jwtVerify(token, getChatSecret());
+      const url = request.nextUrl.clone();
+      url.searchParams.delete("token");
+      const response = NextResponse.redirect(url);
+      response.cookies.set(CHAT_SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: CHAT_TOKEN_EXPIRY_SECONDS,
+        path: "/",
+      });
+      return response;
+    } catch {
+      return NextResponse.redirect(new URL("/chat/error", request.url));
+    }
+  }
+
+  if (!sessionCookie) {
+    return NextResponse.redirect(new URL("/chat/error", request.url));
+  }
+
+  try {
+    await jwtVerify(sessionCookie, getChatSecret());
+    return NextResponse.next();
+  } catch {
+    const response = NextResponse.redirect(new URL("/chat/error", request.url));
+    response.cookies.delete(CHAT_SESSION_COOKIE);
+    return response;
+  }
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Chat widget auth (JWT token → session cookie)
+  const chatResponse = await handleChatAuth(request);
+  if (chatResponse) return chatResponse;
 
   // Allow public paths
   if (isPublicPath(pathname)) {

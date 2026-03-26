@@ -1,20 +1,22 @@
 import { redirect } from "next/navigation";
 import { NewChatCreator } from "./new-chat-creator";
+import { getChatSession } from "@/lib/auth/chat-token";
 
 export default async function NewChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ userId?: string; category?: string; name?: string; initialMessage?: string }>;
+  searchParams: Promise<{ category?: string; name?: string; initialMessage?: string }>;
 }) {
-  const { userId, category, name, initialMessage } = await searchParams;
+  const [session, { category, name, initialMessage }] = await Promise.all([
+    getChatSession(),
+    searchParams,
+  ]);
 
-  if (!userId || typeof userId !== "string" || userId.trim() === "") {
-    redirect("/chat/error");
-  }
+  if (!session) redirect("/chat/error");
 
   return (
     <NewChatCreator
-      userId={userId.trim()}
+      userId={session.userId}
       category={category ?? "GENERAL"}
       name={name}
       initialMessage={initialMessage}

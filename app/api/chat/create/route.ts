@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { createNotifications } from "@/lib/notifications";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { getChatSessionFromRequest } from "@/lib/auth/chat-token";
 import type { Category } from "@prisma/client";
 
 const limiter = createRateLimiter({ limit: 10, windowMs: 60_000 });
@@ -9,14 +10,14 @@ const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL"
 
 export async function POST(req: NextRequest) {
   if (!limiter.check(getIP(req))) return tooManyRequests();
+
+  const session = await getChatSessionFromRequest(req);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const body = await req.json();
-  const { userId, category, name } = body;
+  const { category, name } = body;
 
-  if (!userId || typeof userId !== "string" || !userId.trim()) {
-    return NextResponse.json({ error: "userId required" }, { status: 400 });
-  }
-
-  const uid = userId.trim();
+  const uid = session.userId;
   const safeCategory = (VALID_CATEGORIES.has(category ?? "") ? category! : "GENERAL") as Category;
   const sanitizedName = typeof name === "string" ? name.slice(0, 128) : null;
 
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
     update: { ...(sanitizedName ? { name: sanitizedName } : {}) },
   });
 
-  // Single query to check if any online agent has capacity, instead of N separate counts
+  // Single query to check if any online agent has capacity
   const capacityResult = await prisma.$queryRaw<{ has_capacity: boolean }[]>`
     SELECT EXISTS (
       SELECT 1 FROM "Agent" a
@@ -50,7 +51,6 @@ export async function POST(req: NextRequest) {
     const queueMsg =
       setting?.queueMessage?.trim() ||
       "All our agents are currently busy. You have been added to the queue and someone will be with you as soon as possible.";
-    // Create message + update lastMessageAt in parallel instead of sequential
     await Promise.all([
       prisma.message.create({
         data: { conversationId: conversation.id, senderType: "AI", content: queueMsg, isStreaming: false },
@@ -61,7 +61,6 @@ export async function POST(req: NextRequest) {
       }),
     ]);
   } else {
-    // Reuse capacity query knowledge — agents are online, just get their IDs (fire-and-forget)
     prisma.agent
       .findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })
       .then((agents) => {

@@ -42,7 +42,7 @@ export function CategoryPicker({ userId }: { userId: string }) {
   useEffect(() => {
     userWsManager.init(userId);
 
-    const promise = fetch(`/api/chat/history?userId=${encodeURIComponent(userId)}`)
+    const promise = fetch("/api/chat/history")
       .then((r) => r.ok ? r.json() : { conversations: [] })
       .then((d): PastConv[] => Array.isArray(d) ? d : Array.isArray(d?.conversations) ? d.conversations : []);
 
@@ -67,10 +67,10 @@ export function CategoryPicker({ userId }: { userId: string }) {
     setLoading(category);
     const open = await getOpenConv();
     if (open) {
-      router.push(`/chat/${open.id}?userId=${encodeURIComponent(userId)}`);
+      router.push(`/chat/${open.id}`);
       return;
     }
-    router.push(`/chat/new?userId=${encodeURIComponent(userId)}&category=${category}`);
+    router.push(`/chat/new?category=${category}`);
   }
 
   async function handleSendMessage() {
@@ -78,11 +78,11 @@ export function CategoryPicker({ userId }: { userId: string }) {
     if (!text) return;
     const open = await getOpenConv();
     if (open) {
-      router.push(`/chat/${open.id}?userId=${encodeURIComponent(userId)}&initialMessage=${encodeURIComponent(text)}`);
+      router.push(`/chat/${open.id}?initialMessage=${encodeURIComponent(text)}`);
       return;
     }
     router.push(
-      `/chat/new?userId=${encodeURIComponent(userId)}&category=GENERAL&initialMessage=${encodeURIComponent(text)}`
+      `/chat/new?category=GENERAL&initialMessage=${encodeURIComponent(text)}`
     );
   }
 
@@ -154,7 +154,7 @@ export function CategoryPicker({ userId }: { userId: string }) {
                   return (
                     <Link
                       key={conv.id}
-                      href={`/chat/${conv.id}?userId=${encodeURIComponent(userId)}`}
+                      href={`/chat/${conv.id}`}
                       className="block rounded-2xl px-4 py-3.5 bg-gray-50 active:bg-gray-100 transition-colors"
                     >
                       <div className="flex items-center justify-between mb-1.5">

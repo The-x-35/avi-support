@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { createNotifications } from "@/lib/notifications";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { getChatSessionFromRequest } from "@/lib/auth/chat-token";
 
-// 5 new conversations per IP per minute — prevents spam-creating conversations
 const limiter = createRateLimiter({ limit: 5, windowMs: 60_000 });
 
 const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
@@ -14,23 +14,21 @@ const DEFAULT_QUEUE_MESSAGE =
 export async function POST(request: NextRequest) {
   if (!limiter.check(getIP(request))) return tooManyRequests();
 
-  const { userId, name, category } = await request.json();
+  const session = await getChatSessionFromRequest(request);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!userId || typeof userId !== "string" || userId.length > 128) {
-    return NextResponse.json({ error: "userId required" }, { status: 400 });
-  }
+  const body = await request.json();
+  const { name, category } = body;
 
   const sanitizedName = typeof name === "string" ? name.slice(0, 128) : null;
   const safeCategory = VALID_CATEGORIES.has(category) ? category : "GENERAL";
 
-  // Upsert end user
   const user = await prisma.endUser.upsert({
-    where: { externalId: userId },
-    create: { externalId: userId, name: sanitizedName },
+    where: { externalId: session.userId },
+    create: { externalId: session.userId, name: sanitizedName },
     update: { ...(sanitizedName ? { name: sanitizedName } : {}) },
   });
 
-  // Check if any online agent has capacity
   const onlineAgents = await prisma.agent.findMany({
     where: { isActive: true, status: "ONLINE" },
     select: { id: true, maxConcurrentChats: true },
@@ -48,7 +46,6 @@ export async function POST(request: NextRequest) {
     hasCapacity = openCounts.some(({ agent, count }) => count < agent.maxConcurrentChats);
   }
 
-  // Create a new conversation (queued if no capacity)
   const conversation = await prisma.conversation.create({
     data: {
       userId: user.id,
@@ -59,7 +56,6 @@ export async function POST(request: NextRequest) {
   });
 
   if (!hasCapacity) {
-    // Send queue message to user
     const setting = await prisma.workspaceSetting.findUnique({ where: { id: "default" } });
     const queueMsg = setting?.queueMessage?.trim() || DEFAULT_QUEUE_MESSAGE;
     await prisma.message.create({
@@ -70,7 +66,6 @@ export async function POST(request: NextRequest) {
       data: { lastMessageAt: new Date() },
     });
   } else {
-    // Notify all active ONLINE agents of new conversation (fire-and-forget)
     prisma.agent
       .findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })
       .then((agents) => {

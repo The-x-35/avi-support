@@ -8,13 +8,14 @@ import {
   getVolumeByDay,
 } from "@/lib/services/analytics";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 // Analytics queries are expensive — 20 per agent per minute
 const limiter = createRateLimiter({ limit: 20, windowMs: 60_000 });
 
 const VALID_TYPES = new Set(["overview", "tag_distribution", "sentiment_trend", "top_issues", "volume"]);
 
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/analytics", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -36,5 +37,6 @@ export async function GET(request: NextRequest) {
     case "sentiment_trend":   return NextResponse.json(await getSentimentTrend(days));
     case "top_issues":        return NextResponse.json(await getTopIssues(days));
     case "volume":            return NextResponse.json(await getVolumeByDay(days));
+    default:                  return NextResponse.json({ error: "Unknown type" }, { status: 400 });
   }
-}
+});

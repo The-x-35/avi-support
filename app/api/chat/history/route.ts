@@ -1,10 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const limiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
 
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/chat/history", async (request: NextRequest) => {
   if (!limiter.check(getIP(request))) return tooManyRequests();
 
   const userId = request.nextUrl.searchParams.get("userId");
@@ -49,4 +50,4 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ conversations });
-}
+});

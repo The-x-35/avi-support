@@ -2,16 +2,17 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const MAX_CONTENT_LENGTH = 4_000;
 
 const readLimiter = createRateLimiter({ limit: 120, windowMs: 60_000 });
 const writeLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
-export async function GET(
+export const GET = withTiming("GET /api/conversations/[id]/messages", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -38,12 +39,12 @@ export async function GET(
     messages,
     nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
   });
-}
+});
 
-export async function POST(
+export const POST = withTiming("POST /api/conversations/[id]/messages", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -86,4 +87,4 @@ export async function POST(
   });
 
   return NextResponse.json(message, { status: 201 });
-}
+});

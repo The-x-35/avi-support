@@ -16,6 +16,8 @@ import { getAIProvider } from "../lib/ai";
 import type { ConversationContext } from "../lib/ai/types";
 import { guessCategory } from "../lib/auto-tagger";
 import { createNotifications } from "../lib/notifications";
+import { perf } from "../lib/perf";
+import { getWorkspaceSetting } from "../lib/workspace-cache";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -246,6 +248,7 @@ async function handleWaitMessage(conversationId: string) {
 // ─── AI Response Handler ──────────────────────────────────────────────────────
 
 async function handleAiResponse(conversationId: string) {
+  const t = perf(`WS handleAiResponse(${conversationId})`);
   try {
     const numId = parseInt(conversationId);
     const conversation = await prisma.conversation.findUnique({
@@ -259,6 +262,7 @@ async function handleAiResponse(conversationId: string) {
         },
       },
     });
+    t.split("db fetch");
 
     if (!conversation || conversation.isAiPaused) return;
 
@@ -317,12 +321,15 @@ async function handleAiResponse(conversationId: string) {
       data: { lastMessageAt: new Date() },
     });
 
+    t.split("ai stream complete");
+
     // Notify stream done
     broadcast(conversationId, {
       type: "ai_done",
       payload: { conversationId, messageId: aiMessage.id },
     });
 
+    t.end();
     // Auto-tag in background
     classifyAndTag(conversationId, [...contextMessages, { role: "assistant", content: fullContent }]);
   } catch (err) {
@@ -334,6 +341,7 @@ async function classifyAndTag(
   conversationId: string,
   messages: Array<{ role: "user" | "assistant"; content: string }>
 ) {
+  const t = perf(`WS classifyAndTag(${conversationId})`);
   try {
     const numId = parseInt(conversationId);
     const conversation = await prisma.conversation.findUnique({
@@ -385,6 +393,7 @@ async function classifyAndTag(
       type: "tag_update",
       payload: { conversationId, tags: updatedTags },
     });
+    t.end();
   } catch (err) {
     console.error("[ws] Classification error:", err);
   }
@@ -498,6 +507,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       const { conversationId, content, mediaId, isPrivate } = event;
       const convNumId = parseInt(conversationId);
+      const tMsg = perf(`WS send_message(${conversationId})`);
 
       // Parallelize all independent reads upfront
       const [conversation, agentRecord, mediaRecord] = await Promise.all([
@@ -618,14 +628,14 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
       if (senderType === "USER" && !conversation.isAiPaused) {
         if (conversation.queuedAt) return;
 
-        // Parallelize: fetch settings + count prior user messages at once
+        // Parallelize: fetch settings (cached) + count prior user messages at once
         const [ws_setting, priorUserMsgs] = await Promise.all([
-          prisma.workspaceSetting.findUnique({ where: { id: "default" } }),
+          getWorkspaceSetting(),
           prisma.message.count({
             where: { conversationId: convNumId, senderType: "USER", NOT: { id: message.id } },
           }),
         ]);
-        const aiEnabled = ws_setting?.aiEnabled ?? true;
+        const aiEnabled = ws_setting.aiEnabled;
 
         if (priorUserMsgs === 0) {
           // Single query to check capacity across all agents instead of N separate counts
@@ -640,7 +650,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
           if (!hasCapacity) {
             const queueMsg =
-              ws_setting?.queueMessage?.trim() ||
+              ws_setting.queueMessage?.trim() ||
               "All our agents are currently busy. You have been added to the queue and someone will be with you as soon as possible.";
             // Combine queue update + last message time into one update, and create message in parallel
             const [qMsg] = await Promise.all([
@@ -667,6 +677,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
         }
       }
 
+      tMsg.end();
       if (event.ref) {
         sendToClient(ws, { type: "ack", payload: { ref: event.ref } });
       }
@@ -873,8 +884,8 @@ const DEFAULT_TICKET_MESSAGE =
 
 setInterval(async () => {
   try {
-    const setting = await prisma.workspaceSetting.findUnique({ where: { id: "default" } });
-    const timeoutMinutes = setting?.queueTimeoutMinutes ?? 5;
+    const setting = await getWorkspaceSetting();
+    const timeoutMinutes = setting.queueTimeoutMinutes;
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
 
     const timedOutConvs = await prisma.conversation.findMany({
@@ -909,7 +920,7 @@ setInterval(async () => {
       });
 
       const ticketShortId = ticket.id.slice(-6).toUpperCase();
-      const rawMsg = setting?.ticketMessage?.trim() || DEFAULT_TICKET_MESSAGE;
+      const rawMsg = setting.ticketMessage?.trim() || DEFAULT_TICKET_MESSAGE;
       const ticketMsg = rawMsg.replace("{ticketId}", ticketShortId);
 
       const msg = await prisma.message.create({

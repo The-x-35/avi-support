@@ -1,5 +1,5 @@
 import { prisma } from "./db/prisma";
-import { sendPushToAgent } from "./push";
+import { sendPushBatch } from "./push";
 import type { NotificationType } from "@prisma/client";
 
 export interface CreateNotificationInput {
@@ -32,16 +32,12 @@ export async function createNotifications(input: CreateNotificationInput): Promi
     })),
   });
 
-  // Fan out web push (fire-and-forget)
-  Promise.allSettled(
-    ids.map((agentId) =>
-      sendPushToAgent(agentId, {
-        title: input.title,
-        body: input.body,
-        conversationId: input.conversationId != null ? String(input.conversationId) : undefined,
-      }).catch((e) => console.error("[push] agent", agentId, e))
-    )
-  );
+  // Fan out web push (fire-and-forget) — one DB query for all agents' subscriptions
+  sendPushBatch(ids, {
+    title: input.title,
+    body: input.body,
+    conversationId: input.conversationId != null ? String(input.conversationId) : undefined,
+  }).catch((e) => console.error("[push] batch error:", e));
 
   return created.map((n) => n.id);
 }

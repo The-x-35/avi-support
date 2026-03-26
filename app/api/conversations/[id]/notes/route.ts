@@ -2,10 +2,11 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = withTiming("GET /api/conversations/[id]/notes", async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -18,9 +19,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     orderBy: { createdAt: "asc" },
   });
   return NextResponse.json(notes);
-}
+});
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = withTiming("POST /api/conversations/[id]/notes", async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -35,9 +36,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     include: { agent: { select: { id: true, name: true, avatarUrl: true } } },
   });
   return NextResponse.json(note, { status: 201 });
-}
+});
 
-export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = withTiming("DELETE /api/conversations/[id]/notes", async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -49,4 +50,4 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
   await prisma.note.deleteMany({ where: { id: noteId, conversationId: numId, agentId: auth.payload.agentId } });
   return NextResponse.json({ success: true });
-}
+});

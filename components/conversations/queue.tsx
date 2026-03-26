@@ -20,7 +20,6 @@ interface ConversationItem {
   assignedAgent: { id: string; name: string } | null;
   tags: Array<{ definition: { type: string; value: string; label: string } }>;
   messages: Array<{ content: string; senderType: string; createdAt: string }>;
-  _count: { messages: number };
 }
 type ConversationTag = ConversationItem["tags"][number];
 

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
 
 const limiter = createRateLimiter({ limit: 20, windowMs: 60_000 });
 
-export async function POST(req: NextRequest) {
+export const POST = withTiming("POST /api/chat/category", async (req: NextRequest) => {
   if (!limiter.check(getIP(req))) return tooManyRequests();
 
   const body = await req.json();
@@ -26,4 +27,4 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ success: true, category });
-}
+});

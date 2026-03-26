@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 // Read: 60 per IP per minute
 const readLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
@@ -10,10 +11,10 @@ const writeLimiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
 const MAX_CONTENT_LENGTH = 4_000; // chars
 
 // Public endpoint — loads messages for a conversation.
-export async function GET(
+export const GET = withTiming("GET /api/chat/[id]/messages", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   if (!readLimiter.check(getIP(request))) return tooManyRequests();
 
   const { id } = await params;
@@ -29,13 +30,13 @@ export async function GET(
   });
 
   return NextResponse.json(messages);
-}
+});
 
 // Public endpoint — user sends a message.
-export async function POST(
+export const POST = withTiming("POST /api/chat/[id]/messages", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   if (!writeLimiter.check(getIP(request))) return tooManyRequests();
 
   const { id } = await params;
@@ -80,4 +81,4 @@ export async function POST(
   });
 
   return NextResponse.json(message, { status: 201 });
-}
+});

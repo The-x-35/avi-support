@@ -2,11 +2,12 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 // GET /api/tags — list all tag definitions
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/tags", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -17,10 +18,10 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json(tags);
-}
+});
 
 // POST /api/tags — create a new tag definition
-export async function POST(request: NextRequest) {
+export const POST = withTiming("POST /api/tags", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -41,4 +42,4 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json(tag, { status: 201 });
-}
+});

@@ -116,6 +116,11 @@ model Conversation {
   @@index([lastMessageAt])
   @@index([createdAt])
   @@index([isAiPaused])
+  // Composite indexes for the three main list query patterns:
+  // filters (status / assignedAgentId / userId) + ORDER BY lastMessageAt DESC
+  @@index([status, lastMessageAt(sort: Desc)])
+  @@index([assignedAgentId, lastMessageAt(sort: Desc)])
+  @@index([userId, lastMessageAt(sort: Desc)])
 }
 
 model Media {
@@ -144,6 +149,8 @@ model Message {
   @@index([conversationId])
   @@index([createdAt])
   @@index([senderType])
+  // Covers getConversationById: WHERE conversationId = ? ORDER BY createdAt ASC
+  @@index([conversationId, createdAt])
 }
 
 model TagDefinition {

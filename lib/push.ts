@@ -30,7 +30,28 @@ export async function sendPushToAgent(agentId: string, payload: PushPayload) {
     console.warn("[push] no subscriptions for agent", agentId);
     return;
   }
+  await deliverToSubs(subs, payload);
+}
 
+/**
+ * Batch variant — fetches all subscriptions for all agents in ONE query
+ * instead of N separate findMany calls. Use this when notifying multiple agents.
+ */
+export async function sendPushBatch(agentIds: string[], payload: PushPayload) {
+  if (!initVapid() || !agentIds.length) return;
+
+  const allSubs = await prisma.pushSubscription.findMany({
+    where: { agentId: { in: agentIds } },
+  });
+  if (!allSubs.length) return;
+
+  await deliverToSubs(allSubs, payload);
+}
+
+async function deliverToSubs(
+  subs: Array<{ endpoint: string; p256dh: string; auth: string }>,
+  payload: PushPayload
+) {
   const data = JSON.stringify({
     title: payload.title,
     body: payload.body,

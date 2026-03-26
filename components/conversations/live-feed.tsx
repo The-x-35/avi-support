@@ -22,7 +22,6 @@ interface ConversationItem {
   assignedAgent: { id: string; name: string } | null;
   tags: Array<{ definition: { name: string; color: string | null } }>;
   messages: Array<{ content: string; senderType: string; createdAt: string }>;
-  _count: { messages: number };
 }
 
 type StatusFilter = "ALL" | "OPEN" | "PENDING" | "ESCALATED" | "RESOLVED" | "CLOSED";

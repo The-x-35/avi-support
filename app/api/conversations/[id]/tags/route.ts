@@ -2,14 +2,15 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
 // GET /api/conversations/[id]/tags — list all tags on a conversation
-export async function GET(
+export const GET = withTiming("GET /api/conversations/[id]/tags", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -23,13 +24,13 @@ export async function GET(
   });
 
   return NextResponse.json(tags);
-}
+});
 
 // POST /api/conversations/[id]/tags — add a tag (by definitionId or create new)
-export async function POST(
+export const POST = withTiming("POST /api/conversations/[id]/tags", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -63,13 +64,13 @@ export async function POST(
   });
 
   return NextResponse.json(tag, { status: 201 });
-}
+});
 
 // DELETE /api/conversations/[id]/tags?tagId=... — remove a tag from a conversation
-export async function DELETE(
+export const DELETE = withTiming("DELETE /api/conversations/[id]/tags", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
@@ -82,4 +83,4 @@ export async function DELETE(
 
   await prisma.tag.deleteMany({ where: { id: tagId, conversationId: numId } });
   return NextResponse.json({ success: true });
-}
+});

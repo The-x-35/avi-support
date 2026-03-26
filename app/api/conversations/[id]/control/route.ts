@@ -2,16 +2,17 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { updateConversationControl } from "@/lib/services/conversations";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const VALID_ACTIONS = new Set(["pause_ai", "resume_ai", "takeover", "resolve", "escalate"]);
 
 // 30 control actions per agent per minute
 const limiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
 
-export async function POST(
+export const POST = withTiming("POST /api/conversations/[id]/control", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -31,4 +32,4 @@ export async function POST(
   );
 
   return NextResponse.json(conversation);
-}
+});

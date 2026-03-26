@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
-import type { ConversationStatus, Category, Priority, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import type { ConversationStatus, Category, Priority } from "@prisma/client";
+import { perf } from "@/lib/perf";
 
 export interface ConversationFilters {
   status?: ConversationStatus | ConversationStatus[];
@@ -14,6 +16,43 @@ export interface ConversationFilters {
   dateTo?: Date;
   page?: number;
   limit?: number;
+}
+
+// Raw row types for $queryRaw results
+interface TagRow {
+  id: string;
+  conversationId: number;
+  definitionId: string;
+  createdAt: Date;
+  td_id: string;
+  td_name: string;
+  td_color: string | null;
+}
+
+interface LatestMsgRow {
+  conversationId: number;
+  content: string;
+  senderType: string;
+  createdAt: Date;
+}
+
+interface MsgWithRelationsRow {
+  id: string;
+  conversationId: number;
+  senderType: string;
+  senderId: string | null;
+  content: string;
+  isStreaming: boolean;
+  isPrivate: boolean;
+  mediaId: string | null;
+  createdAt: Date;
+  a_id: string | null;
+  a_name: string | null;
+  a_avatarUrl: string | null;
+  med_id: string | null;
+  med_url: string | null;
+  med_mimeType: string | null;
+  med_fileName: string | null;
 }
 
 export async function getConversations(filters: ConversationFilters = {}) {
@@ -59,12 +98,10 @@ export async function getConversations(filters: ConversationFilters = {}) {
     };
   }
 
-  // Tag filter
   if (tagName) {
     where.tags = { some: { definition: { name: tagName } } };
   }
 
-  // Full-text search on subject + recent message content
   if (search) {
     where.OR = [
       { subject: { contains: search, mode: "insensitive" } },
@@ -78,20 +115,17 @@ export async function getConversations(filters: ConversationFilters = {}) {
     ];
   }
 
-  const [conversations, total] = await Promise.all([
+  const t = perf("getConversations");
+
+  // Round 1: fetch conversation scalars + count in parallel
+  const [convRows, total] = await Promise.all([
     prisma.conversation.findMany({
       where,
-      include: {
-        user: { select: { id: true, name: true, email: true, avatarUrl: true, externalId: true } },
-        assignedAgent: { select: { id: true, name: true, avatarUrl: true } },
-        tags: { include: { definition: true } },
-        messages: {
-          where: { content: { not: "" } },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { content: true, senderType: true, createdAt: true },
-        },
-        _count: { select: { messages: true } },
+      select: {
+        id: true, userId: true, category: true, status: true,
+        isAiPaused: true, assignedAgentId: true, priority: true,
+        subject: true, queuedAt: true, lastMessageAt: true,
+        lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,
       },
       orderBy: { lastMessageAt: "desc" },
       skip: (page - 1) * limit,
@@ -100,12 +134,88 @@ export async function getConversations(filters: ConversationFilters = {}) {
     prisma.conversation.count({ where }),
   ]);
 
+  if (!convRows.length) {
+    t.end();
+    return { conversations: [], total, page, limit };
+  }
+
+  const ids = convRows.map((c) => c.id);
+  const userIds = [...new Set(convRows.map((c) => c.userId))];
+  const agentIds = [
+    ...new Set(convRows.map((c) => c.assignedAgentId).filter((id): id is string => id !== null)),
+  ];
+
+  // Round 2: fetch all relations in parallel (1 round instead of 2)
+  const [users, agents, tagRows, latestMsgs] = await Promise.all([
+    prisma.endUser.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, email: true, avatarUrl: true, externalId: true },
+    }),
+    agentIds.length
+      ? prisma.agent.findMany({
+          where: { id: { in: agentIds } },
+          select: { id: true, name: true, avatarUrl: true },
+        })
+      : Promise.resolve([]),
+    // JOIN tag + tagDefinition in one query — avoids a 3rd sequential round
+    prisma.$queryRaw<TagRow[]>`
+      SELECT t.id, t."conversationId", t."definitionId", t."createdAt",
+             td.id AS "td_id", td.name AS "td_name", td.color AS "td_color"
+      FROM "Tag" t
+      JOIN "TagDefinition" td ON td.id = t."definitionId"
+      WHERE t."conversationId" IN (${Prisma.join(ids)})
+    `,
+    // DISTINCT ON to get latest non-empty message per conversation
+    prisma.$queryRaw<LatestMsgRow[]>`
+      SELECT DISTINCT ON ("conversationId")
+             "conversationId", content, "senderType", "createdAt"
+      FROM "Message"
+      WHERE "conversationId" IN (${Prisma.join(ids)})
+        AND content <> ''
+      ORDER BY "conversationId", "createdAt" DESC
+    `,
+  ]);
+
+  // Build lookup maps
+  const userMap = new Map(users.map((u) => [u.id, u]));
+  const agentMap = new Map(agents.map((a) => [a.id, a]));
+
+  const tagsMap = new Map<number, TagRow[]>();
+  for (const row of tagRows) {
+    const key = Number(row.conversationId);
+    if (!tagsMap.has(key)) tagsMap.set(key, []);
+    tagsMap.get(key)!.push(row);
+  }
+
+  const msgMap = new Map(latestMsgs.map((m) => [Number(m.conversationId), m]));
+
+  // Assemble final shape
+  const conversations = convRows.map((c) => ({
+    ...c,
+    user: userMap.get(c.userId) ?? { id: c.userId, name: null, email: null, avatarUrl: null, externalId: "" },
+    assignedAgent: c.assignedAgentId ? (agentMap.get(c.assignedAgentId) ?? null) : null,
+    tags: (tagsMap.get(c.id) ?? []).map((row) => ({
+      id: row.id,
+      conversationId: row.conversationId,
+      definitionId: row.definitionId,
+      createdAt: row.createdAt,
+      definition: { id: row.td_id, name: row.td_name, color: row.td_color },
+    })),
+    messages: (() => {
+      const m = msgMap.get(c.id);
+      return m ? [{ content: m.content, senderType: m.senderType, createdAt: m.createdAt }] : [];
+    })(),
+  }));
+
+  t.end();
   return { conversations, total, page, limit };
 }
 
 export async function getConversationById(id: number) {
-  // Run stale-streaming cleanup in parallel with the main fetch instead of blocking it
-  const [, conversation] = await Promise.all([
+  const t = perf(`getConversationById(${id})`);
+
+  // Round 1: cleanup stale streaming messages + fetch conversation scalars in parallel
+  const [, conv] = await Promise.all([
     prisma.message.updateMany({
       where: {
         conversationId: id,
@@ -116,28 +226,84 @@ export async function getConversationById(id: number) {
     }),
     prisma.conversation.findUnique({
       where: { id },
-      include: {
-        user: {
-          select: {
-            id: true, name: true, email: true, phone: true,
-            avatarUrl: true, externalId: true, createdAt: true,
-          },
-        },
-        assignedAgent: { select: { id: true, name: true, avatarUrl: true, email: true } },
-        tags: { include: { definition: true } },
-        messages: {
-          orderBy: { createdAt: "asc" },
-          include: {
-            agent: { select: { id: true, name: true, avatarUrl: true } },
-            media: true,
-          },
-        },
-        ticket: true,
+      select: {
+        id: true, userId: true, category: true, status: true,
+        isAiPaused: true, assignedAgentId: true, priority: true,
+        subject: true, queuedAt: true, lastMessageAt: true,
+        lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,
       },
     }),
   ]);
 
-  return conversation;
+  if (!conv) {
+    t.end();
+    return null;
+  }
+
+  // Round 2: fetch all relations in parallel (saves 1 sequential round vs nested include)
+  const [user, assignedAgent, ticket, tagRows, msgRows] = await Promise.all([
+    prisma.endUser.findUnique({
+      where: { id: conv.userId },
+      select: { id: true, name: true, email: true, phone: true, avatarUrl: true, externalId: true, createdAt: true },
+    }),
+    conv.assignedAgentId
+      ? prisma.agent.findUnique({
+          where: { id: conv.assignedAgentId },
+          select: { id: true, name: true, avatarUrl: true, email: true },
+        })
+      : Promise.resolve(null),
+    conv.ticketId
+      ? prisma.ticket.findUnique({ where: { id: conv.ticketId } })
+      : Promise.resolve(null),
+    // JOIN tag + tagDefinition — avoids a 3rd round
+    prisma.$queryRaw<TagRow[]>`
+      SELECT t.id, t."conversationId", t."definitionId", t."createdAt",
+             td.id AS "td_id", td.name AS "td_name", td.color AS "td_color"
+      FROM "Tag" t
+      JOIN "TagDefinition" td ON td.id = t."definitionId"
+      WHERE t."conversationId" = ${id}
+    `,
+    // JOIN message + agent + media in one query — avoids a 3rd round
+    prisma.$queryRaw<MsgWithRelationsRow[]>`
+      SELECT m.id, m."conversationId", m."senderType", m."senderId",
+             m.content, m."isStreaming", m."isPrivate", m."mediaId", m."createdAt",
+             a.id AS "a_id", a.name AS "a_name", a."avatarUrl" AS "a_avatarUrl",
+             med.id AS "med_id", med.url AS "med_url",
+             med."mimeType" AS "med_mimeType", med."fileName" AS "med_fileName"
+      FROM "Message" m
+      LEFT JOIN "Agent" a ON a.id = m."senderId" AND m."senderType" = 'AGENT'
+      LEFT JOIN "Media" med ON med.id = m."mediaId"
+      WHERE m."conversationId" = ${id}
+      ORDER BY m."createdAt" ASC
+    `,
+  ]);
+
+  const tags = tagRows.map((row) => ({
+    id: row.id,
+    conversationId: row.conversationId,
+    definitionId: row.definitionId,
+    createdAt: row.createdAt,
+    definition: { id: row.td_id, name: row.td_name, color: row.td_color },
+  }));
+
+  const messages = msgRows.map((row) => ({
+    id: row.id,
+    conversationId: row.conversationId,
+    senderType: row.senderType,
+    senderId: row.senderId,
+    content: row.content,
+    isStreaming: row.isStreaming,
+    isPrivate: row.isPrivate,
+    mediaId: row.mediaId,
+    createdAt: row.createdAt,
+    agent: row.a_id ? { id: row.a_id, name: row.a_name!, avatarUrl: row.a_avatarUrl } : null,
+    media: row.med_id
+      ? { id: row.med_id, url: row.med_url!, mimeType: row.med_mimeType!, fileName: row.med_fileName! }
+      : null,
+  }));
+
+  t.end();
+  return { ...conv, user, assignedAgent, ticket, tags, messages };
 }
 
 export async function updateConversationControl(

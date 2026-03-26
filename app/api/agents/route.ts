@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, requireRole } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const VALID_ROLES = new Set(["ADMIN", "AGENT"]);
 const VALID_STATUSES = new Set(["ONLINE", "AWAY", "OFFLINE"]);
@@ -10,7 +11,7 @@ const readLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 // Admin mutations are rare — 10 per minute is generous
 const writeLimiter = createRateLimiter({ limit: 10, windowMs: 60_000 });
 
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/agents", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -31,9 +32,9 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json(agents);
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withTiming("PATCH /api/agents", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -74,4 +75,4 @@ export async function PATCH(request: NextRequest) {
 
   const agent = await prisma.agent.update({ where: { id }, data });
   return NextResponse.json(agent);
-}
+});

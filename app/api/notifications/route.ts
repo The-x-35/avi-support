@@ -2,10 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/notifications", async (request: NextRequest) => {
   if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
@@ -30,9 +31,9 @@ export async function GET(request: NextRequest) {
   if (hasMore) notifications.pop();
 
   return NextResponse.json({ notifications, unreadCount, hasMore });
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withTiming("PATCH /api/notifications", async (request: NextRequest) => {
   if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
@@ -54,4 +55,4 @@ export async function PATCH(request: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
-}
+});

@@ -2,13 +2,14 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { getConversations } from "@/lib/services/conversations";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 type ConversationFilters = NonNullable<Parameters<typeof getConversations>[0]>;
 
 // 120 requests per agent per minute
 const limiter = createRateLimiter({ limit: 120, windowMs: 60_000 });
 
-export async function GET(request: NextRequest) {
+export const GET = withTiming("GET /api/conversations", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -44,4 +45,4 @@ export async function GET(request: NextRequest) {
 
   const result = await getConversations(filters);
   return NextResponse.json(result);
-}
+});

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { createNotifications } from "@/lib/notifications";
 import { pushNotificationToAgent } from "@/lib/ws-push";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
+import { withTiming } from "@/lib/perf";
 
 const VALID_STATUSES = new Set(["OPEN", "PENDING", "RESOLVED", "ESCALATED", "CLOSED"]);
 const VALID_PRIORITIES = new Set(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
@@ -14,10 +15,10 @@ const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL"
 const readLimiter = createRateLimiter({ limit: 120, windowMs: 60_000 });
 const writeLimiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
 
-export async function GET(
+export const GET = withTiming("GET /api/conversations/[id]", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -32,12 +33,12 @@ export async function GET(
   }
 
   return NextResponse.json(conversation);
-}
+});
 
-export async function PATCH(
+export const PATCH = withTiming("PATCH /api/conversations/[id]", async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
 
@@ -95,4 +96,4 @@ export async function PATCH(
   }
 
   return NextResponse.json(conversation);
-}
+});

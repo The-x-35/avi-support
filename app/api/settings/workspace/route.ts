@@ -2,23 +2,15 @@ import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest, requireRole } from "@/lib/auth/api-auth";
 import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, getIP, tooManyRequests } from "@/lib/rate-limit";
+import { getWorkspaceSetting, invalidateWorkspaceCache } from "@/lib/workspace-cache";
 
 const limiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
-
-async function getSetting() {
-  return prisma.workspaceSetting.upsert({
-    where: { id: "default" },
-    create: { id: "default", aiEnabled: true },
-    update: {},
-  });
-}
 
 export async function GET(request: NextRequest) {
   if (!limiter.check(getIP(request))) return tooManyRequests();
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
-  const setting = await getSetting();
-  return NextResponse.json(setting);
+  return NextResponse.json(await getWorkspaceSetting());
 }
 
 export async function PATCH(request: NextRequest) {
@@ -48,5 +40,7 @@ export async function PATCH(request: NextRequest) {
     create: { id: "default", aiEnabled: true, ...data },
     update: data,
   });
+
+  invalidateWorkspaceCache();
   return NextResponse.json(setting);
 }

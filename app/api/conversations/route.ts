@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { authenticateRequest } from "@/lib/auth/api-auth";
 import { getConversations } from "@/lib/services/conversations";
+import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
 import { withTiming } from "@/lib/perf";
 
@@ -41,8 +42,50 @@ export const GET = withTiming("GET /api/conversations", async (request: NextRequ
       : undefined,
     page: searchParams.get("page") ? parseInt(searchParams.get("page")!) : 1,
     limit,
+    skipCount: searchParams.get("skipCount") === "true",
   };
 
   const result = await getConversations(filters);
   return NextResponse.json(result);
+});
+
+// POST /api/conversations — agent initiates a new conversation with a user by email
+export const POST = withTiming("POST /api/conversations", async (request: NextRequest) => {
+  const auth = await authenticateRequest(request);
+  if ("error" in auth) return auth.error;
+  if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
+
+  const body = await request.json();
+  const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : null;
+  if (!email) return NextResponse.json({ error: "email required" }, { status: 400 });
+
+  const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : null;
+  const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
+  const category = typeof body.category === "string" && VALID_CATEGORIES.has(body.category) ? body.category : null;
+
+  // Find existing end-user by email, or create one
+  let endUser = await prisma.endUser.findFirst({ where: { email } });
+  if (!endUser) {
+    endUser = await prisma.endUser.create({
+      data: {
+        externalId: `dashboard:${email}`,
+        email,
+        name,
+      },
+    });
+  } else if (name && !endUser.name) {
+    endUser = await prisma.endUser.update({ where: { id: endUser.id }, data: { name } });
+  }
+
+  const conversation = await prisma.conversation.create({
+    data: {
+      userId: endUser.id,
+      assignedAgentId: auth.payload.agentId,
+      ...(category ? { category: category as "CARDS" | "ACCOUNT" | "SPENDS" | "KYC" | "GENERAL" | "OTHER" } : {}),
+      isAiPaused: true,
+      lastMessageAt: new Date(),
+    },
+  });
+
+  return NextResponse.json(conversation, { status: 201 });
 });

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { BottomNav } from "@/components/layout/bottom-nav";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
 import { ChatTabsProvider } from "@/lib/contexts/chat-tabs-context";
+import { InitiateChatButton } from "@/components/conversations/initiate-chat-button";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/cookies";
 
 export default async function DashboardLayout({
@@ -40,6 +41,7 @@ export default async function DashboardLayout({
           <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
             {children}
           </main>
+          <InitiateChatButton />
           <BottomNav agent={agent} />
         </div>
       </NotificationProvider>

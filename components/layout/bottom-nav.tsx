@@ -5,14 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils/cn";
 import {
   LayoutDashboard, BarChart2, Filter, Settings, Bell,
-  CircleUser, MessageSquare, Radio, X, MessageCircle,
+  CircleUser, MessageSquare, X, MessageCircle,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/notification-context";
 import { useChatTabs } from "@/lib/contexts/chat-tabs-context";
 
 const NAV_ITEMS = [
   { href: "/live",          label: "Chats",         icon: MessageSquare },
-  { href: "/",              label: "Overview",       icon: LayoutDashboard },
+  { href: "/overview",      label: "Overview",       icon: LayoutDashboard },
   { href: "/my-issues",     label: "My Issues",      icon: CircleUser },
   { href: "/analytics",     label: "Analytics",      icon: BarChart2 },
   { href: "/segments",      label: "Segments",       icon: Filter },
@@ -73,11 +73,14 @@ export function BottomNav({ agent: _agent }: BottomNavProps) {
           {tabs.map((tab) => {
             const isActive = activeConvId === tab.convId;
             return (
-              <button
+              <div
                 key={tab.convId}
+                role="button"
+                tabIndex={0}
                 onClick={() => router.push(`/conversations/${tab.convId}`)}
+                onKeyDown={(e) => e.key === "Enter" && router.push(`/conversations/${tab.convId}`)}
                 className={cn(
-                  "flex items-center gap-2 rounded-xl px-3 py-1.5 transition-all",
+                  "flex items-center gap-2 rounded-xl px-3 py-1.5 transition-all cursor-pointer select-none",
                   isActive
                     ? "bg-[#0f0f0f] text-white"
                     : "text-gray-500 hover:bg-gray-100"
@@ -100,7 +103,7 @@ export function BottomNav({ agent: _agent }: BottomNavProps) {
                 >
                   <X className="w-2.5 h-2.5" />
                 </button>
-              </button>
+              </div>
             );
           })}
         </div>

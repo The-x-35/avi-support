@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock, EyeOff, Paperclip, Bold, Italic, Underline } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge } from "lucide-react";
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
@@ -172,6 +172,11 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [historyDetail, setHistoryDetail] = useState<HistoryDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
 
+  // Merge conversations
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSelected, setMergeSelected] = useState<Set<number>>(new Set());
+  const [merging, setMerging] = useState(false);
+
   // Editing state
   const [editOpen, setEditOpen] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -190,6 +195,10 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   // Slash command autocomplete
   const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed, "" = show all
   const [slashIndex, setSlashIndex] = useState(0);
+
+  // Follow
+  const [following, setFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
 
   // Private message toggle
   const [privateMode, setPrivateMode] = useState(false);
@@ -237,6 +246,16 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       .then((d) => setAiEnabled(d.aiEnabled ?? true))
       .catch(() => {});
   }, []);
+
+  // Fetch follow status
+  useEffect(() => {
+    fetch(`/api/conversations/${conv.id}/followers`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: { agentId: string }[]) => {
+        setFollowing(data.some((f) => f.agentId === currentAgentId));
+      })
+      .catch(() => {});
+  }, [conv.id, currentAgentId]);
 
   // Fetch agents list for assignment dropdown
   useEffect(() => {
@@ -461,6 +480,19 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     return data.token ?? "";
   }
 
+  async function toggleFollow() {
+    setFollowLoading(true);
+    try {
+      const method = following ? "DELETE" : "POST";
+      await fetch(`/api/conversations/${conv.id}/follow`, { method });
+      setFollowing((f) => !f);
+    } catch {
+      // ignore
+    } finally {
+      setFollowLoading(false);
+    }
+  }
+
   async function sendControl(action: string) {
     setControlLoading(action);
     if (agentWsManager.ready) {
@@ -504,6 +536,55 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       setHistoryDetail(data);
     } finally {
       setHistoryDetailLoading(false);
+    }
+  }
+
+  function toggleMergeSelection(id: number) {
+    setMergeSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleMerge() {
+    if (mergeSelected.size === 0) return;
+    const count = mergeSelected.size;
+    const confirmed = window.confirm(
+      `Merge ${count} conversation${count > 1 ? "s" : ""} into this one? Messages, notes, and tags will be combined.`
+    );
+    if (!confirmed) return;
+
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/conversations/${conv.id}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceConversationIds: [...mergeSelected] }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Merge failed" }));
+        alert(err.error ?? "Merge failed");
+        return;
+      }
+      const merged = await res.json();
+      setMessages(
+        (merged.messages ?? []).map((m: Message & { isPrivate?: boolean }) => ({
+          ...m,
+          isPrivate: m.isPrivate ?? false,
+        }))
+      );
+      setConv((c) => ({ ...c, tags: merged.tags ?? c.tags, lastMessageAt: merged.lastMessageAt ?? c.lastMessageAt }));
+      setMergeMode(false);
+      setMergeSelected(new Set());
+      // Refresh user history
+      fetch(`/api/conversations?userId=${conv.user.id}&limit=20`)
+        .then((r) => r.json())
+        .then((d) => setUserHistory(d.conversations ?? []))
+        .catch(() => {});
+    } finally {
+      setMerging(false);
     }
   }
 
@@ -880,6 +961,22 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
           {/* Controls */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Follow button */}
+            <button
+              onClick={toggleFollow}
+              disabled={followLoading}
+              title={following ? "Unfollow — stop receiving notifications for this chat" : "Follow — get notified on new messages"}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50",
+                following
+                  ? "bg-violet-50 text-violet-600 hover:bg-violet-100"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              )}
+            >
+              {following ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+              {following ? "Following" : "Follow"}
+            </button>
+
             {conv.isAiPaused && aiEnabled && (
               <Button
                 variant="secondary"
@@ -1522,9 +1619,25 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
         {/* User history */}
         <div className="p-5 border-b border-gray-100">
-          <div className="flex items-center gap-1.5 mb-3">
-            <History className="w-3 h-3 text-gray-400" />
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Past conversations</h3>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <History className="w-3 h-3 text-gray-400" />
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Past conversations</h3>
+            </div>
+            {userHistory && userHistory.filter((c) => c.id !== conv.id && (c.status === "OPEN" || c.status === "PENDING")).length > 0 && (
+              <button
+                onClick={() => { setMergeMode((v) => !v); setMergeSelected(new Set()); }}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                  mergeMode
+                    ? "bg-gray-900 text-white"
+                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                }`}
+                title={mergeMode ? "Cancel merge" : "Merge conversations"}
+              >
+                <GitMerge className="w-3 h-3" />
+                {mergeMode ? "Cancel" : "Merge"}
+              </button>
+            )}
           </div>
           {historyLoading ? (
             <div className="space-y-2">
@@ -1543,14 +1656,28 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 .filter((c) => c.id !== conv.id)
                 .map((c) => {
                   const lastMsg = c.messages[0];
+                  const isMergeable = mergeMode && (c.status === "OPEN" || c.status === "PENDING");
+                  const isSelected = mergeSelected.has(c.id);
                   return (
                     <button
                       key={c.id}
-                      onClick={() => openHistoryDetail(c.id)}
-                      className="w-full text-left rounded-xl bg-gray-50 hover:bg-gray-100 transition-colors px-3 py-2.5"
+                      onClick={() => isMergeable ? toggleMergeSelection(c.id) : openHistoryDetail(c.id)}
+                      className={`w-full text-left rounded-xl transition-colors px-3 py-2.5 ${
+                        isSelected
+                          ? "bg-blue-50 ring-1 ring-blue-300"
+                          : "bg-gray-50 hover:bg-gray-100"
+                      } ${mergeMode && !isMergeable ? "opacity-40 cursor-not-allowed" : ""}`}
+                      disabled={mergeMode && !isMergeable}
                     >
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-1.5">
+                          {mergeMode && isMergeable && (
+                            <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${
+                              isSelected ? "bg-blue-500 border-blue-500" : "border-gray-300"
+                            }`}>
+                              {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                            </span>
+                          )}
                           <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
                             {categoryLabel(c.category)}
                           </span>
@@ -1569,6 +1696,17 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                     </button>
                   );
                 })}
+
+              {mergeMode && mergeSelected.size > 0 && (
+                <button
+                  onClick={handleMerge}
+                  disabled={merging}
+                  className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gray-900 text-white text-xs font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
+                >
+                  <GitMerge className="w-3 h-3" />
+                  {merging ? "Merging…" : `Merge ${mergeSelected.size} into #${conv.id}`}
+                </button>
+              )}
             </div>
           )}
         </div>

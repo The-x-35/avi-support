@@ -27,6 +27,7 @@ model Agent {
   notes             Note[]
   notifications     Notification[]
   pushSubscriptions PushSubscription[]
+  followedConversations ConversationFollower[]
 
   @@index([email])
   @@index([googleId])
@@ -108,6 +109,7 @@ model Conversation {
   messages        Message[]
   tags            Tag[]
   notes           Note[]
+  followers       ConversationFollower[]
 
   @@index([userId])
   @@index([status])
@@ -116,11 +118,15 @@ model Conversation {
   @@index([lastMessageAt])
   @@index([createdAt])
   @@index([isAiPaused])
-  // Composite indexes for the three main list query patterns:
-  // filters (status / assignedAgentId / userId) + ORDER BY lastMessageAt DESC
+  // Composite indexes for list query patterns:
+  // single-column filters + ORDER BY lastMessageAt DESC
   @@index([status, lastMessageAt(sort: Desc)])
   @@index([assignedAgentId, lastMessageAt(sort: Desc)])
   @@index([userId, lastMessageAt(sort: Desc)])
+  @@index([isAiPaused, lastMessageAt(sort: Desc)])
+  // Two-column filter combos (my-issues: assignedAgent + status, live: status + isAiPaused)
+  @@index([assignedAgentId, status, lastMessageAt(sort: Desc)])
+  @@index([status, isAiPaused, lastMessageAt(sort: Desc)])
 }
 
 model Media {
@@ -165,13 +171,33 @@ model Tag {
   id             String        @id @default(uuid())
   conversationId Int
   definitionId   String
+  source         TagSource     @default(AGENT)
   createdAt      DateTime      @default(now())
   conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   definition     TagDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
 
-  @@unique([conversationId, definitionId])
+  @@unique([conversationId, definitionId, source])
   @@index([conversationId])
   @@index([definitionId])
+  @@index([source])
+}
+
+model ConversationFollower {
+  id             String       @id @default(uuid())
+  conversationId Int
+  agentId        String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, agentId])
+  @@index([agentId])
+  @@index([conversationId])
+}
+
+enum TagSource {
+  AGENT
+  AI
 }
 
 model Segment {

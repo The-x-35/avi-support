@@ -1,22 +1,16 @@
 import { getTopIssues } from "@/lib/services/analytics";
-import { BarChart } from "./bar-chart";
+import { BubbleChart } from "./bubble-chart";
 
 export async function TopIssuesChart() {
   const issues = await getTopIssues(7);
-  type TopIssueItem = Awaited<ReturnType<typeof getTopIssues>>[number];
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl p-5">
-      <h3 className="text-sm font-semibold text-gray-900 mb-4">
-        Top Issues (Last 7 days)
-      </h3>
-      <BarChart
-        data={issues.map((i: TopIssueItem) => ({
-          label: i.name ?? "",
-          value: i.count,
-        }))}
-        color="#3b82f6"
-      />
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-gray-900">Issues</h3>
+        <p className="text-xs text-gray-400 mt-0.5">AI-detected topics · last 7 days</p>
+      </div>
+      <BubbleChart data={issues} />
     </div>
   );
 }

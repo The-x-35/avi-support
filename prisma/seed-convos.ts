@@ -236,8 +236,8 @@ async function main() {
       const defId = tagMap.get(tagName);
       if (defId) {
         await prisma.tag.upsert({
-          where: { conversationId_definitionId: { conversationId: conv.id, definitionId: defId } },
-          create: { conversationId: conv.id, definitionId: defId },
+          where: { conversationId_definitionId_source: { conversationId: conv.id, definitionId: defId, source: "AGENT" } },
+          create: { conversationId: conv.id, definitionId: defId, source: "AGENT" },
           update: {},
         });
       }

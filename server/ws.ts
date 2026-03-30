@@ -384,8 +384,8 @@ async function classifyAndTag(
     await prisma.$transaction(
       defRecords.map((def) =>
         prisma.tag.upsert({
-          where: { conversationId_definitionId: { conversationId: numId, definitionId: def.id } },
-          create: { conversationId: numId, definitionId: def.id },
+          where: { conversationId_definitionId_source: { conversationId: numId, definitionId: def.id, source: "AI" } },
+          create: { conversationId: numId, definitionId: def.id, source: "AI" },
           update: {},
         })
       )
@@ -639,18 +639,27 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Notify agents of new user message (skip private agent messages)
       if (senderType === "USER" && !message.isPrivate) {
-        let notifyIds: string[];
+        let primaryIds: string[];
         if (conversation.assignedAgentId) {
-          // Only notify assigned agent if they are ONLINE
           const assignedAgent = await prisma.agent.findUnique({
             where: { id: conversation.assignedAgentId },
             select: { status: true },
           });
-          notifyIds = assignedAgent?.status === "ONLINE" ? [conversation.assignedAgentId] : [];
+          primaryIds = assignedAgent?.status === "ONLINE" ? [conversation.assignedAgentId] : [];
         } else {
-          notifyIds = (await prisma.agent.findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })).map((a) => a.id);
+          primaryIds = (await prisma.agent.findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })).map((a) => a.id);
         }
-        const notifTitle = `New message from ${conversation.user.externalId}`;
+
+        // Also notify followers who aren't already in primaryIds
+        const followerRows = await prisma.conversationFollower.findMany({
+          where: { conversationId: convNumId },
+          select: { agentId: true },
+        });
+        const primarySet = new Set(primaryIds);
+        const followerIds = followerRows.map((f) => f.agentId).filter((id) => !primarySet.has(id));
+
+        const notifyIds = [...primaryIds, ...followerIds];
+        const notifTitle = `New message from ${conversation.user.name ?? conversation.user.externalId}`;
         const notifBody = content.slice(0, 100);
         createNotifications({
           agentIds: notifyIds,

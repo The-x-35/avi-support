@@ -16,6 +16,7 @@ export interface ConversationFilters {
   dateTo?: Date;
   page?: number;
   limit?: number;
+  skipCount?: boolean;
 }
 
 // Raw row types for $queryRaw results
@@ -69,6 +70,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     dateTo,
     page = 1,
     limit = 50,
+    skipCount = false,
   } = filters;
 
   const where: Prisma.ConversationWhereInput = { lastMessageAt: { not: null } };
@@ -117,7 +119,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
 
   const t = perf("getConversations");
 
-  // Round 1: fetch conversation scalars + count in parallel
+  // Round 1: fetch conversation scalars + (optionally) count in parallel
   const [convRows, total] = await Promise.all([
     prisma.conversation.findMany({
       where,
@@ -131,7 +133,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
       skip: (page - 1) * limit,
       take: limit,
     }),
-    prisma.conversation.count({ where }),
+    skipCount ? Promise.resolve(0) : prisma.conversation.count({ where }),
   ]);
 
   if (!convRows.length) {

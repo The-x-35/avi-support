@@ -228,8 +228,8 @@ async function main() {
       const def = await prisma.tagDefinition.findUnique({ where: { name: tagName } });
       if (def) {
         await prisma.tag.upsert({
-          where: { conversationId_definitionId: { conversationId: conversation.id, definitionId: def.id } },
-          create: { conversationId: conversation.id, definitionId: def.id },
+          where: { conversationId_definitionId_source: { conversationId: conversation.id, definitionId: def.id, source: "AGENT" } },
+          create: { conversationId: conversation.id, definitionId: def.id, source: "AGENT" },
           update: {},
         });
       }

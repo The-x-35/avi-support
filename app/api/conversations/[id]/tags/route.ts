@@ -57,8 +57,8 @@ export const POST = withTiming("POST /api/conversations/[id]/tags", async (
   }
 
   const tag = await prisma.tag.upsert({
-    where: { conversationId_definitionId: { conversationId: numId, definitionId: defId } },
-    create: { conversationId: numId, definitionId: defId },
+    where: { conversationId_definitionId_source: { conversationId: numId, definitionId: defId, source: "AGENT" } },
+    create: { conversationId: numId, definitionId: defId, source: "AGENT" },
     update: {},
     include: { definition: true },
   });

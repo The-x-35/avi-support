@@ -72,15 +72,15 @@ export async function getOverviewStats() {
   };
 }
 
-export async function getTagDistribution(days = 7) {
+export async function getTagDistribution(days = 7, source?: "AGENT" | "AI") {
   const since = startOfDay(subDays(new Date(), days));
 
   const tags = await prisma.tag.groupBy({
     by: ["definitionId"],
-    where: { createdAt: { gte: since } },
+    where: { createdAt: { gte: since }, ...(source ? { source } : {}) },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
-    take: 20,
+    take: 50,
   });
 
   const definitions = await prisma.tagDefinition.findMany({
@@ -138,15 +138,15 @@ export async function getSentimentTrend(days = 14) {
   return Array.from(byDay.entries()).map(([date, counts]) => ({ date, ...counts }));
 }
 
-export async function getTopIssues(days = 7) {
+export async function getTopIssues(days = 7, source?: "AGENT" | "AI") {
   const since = startOfDay(subDays(new Date(), days));
 
   const issues = await prisma.tag.groupBy({
     by: ["definitionId"],
-    where: { createdAt: { gte: since } },
+    where: { createdAt: { gte: since }, ...(source ? { source } : {}) },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
-    take: 10,
+    take: 40,
   });
 
   const definitions = await prisma.tagDefinition.findMany({
@@ -157,6 +157,7 @@ export async function getTopIssues(days = 7) {
 
   return issues.map((i) => ({
     name: defMap[i.definitionId]?.name,
+    color: defMap[i.definitionId]?.color ?? null,
     count: i._count.id,
   }));
 }

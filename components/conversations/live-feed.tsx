@@ -7,7 +7,8 @@ import { StatusBadge, PriorityBadge, Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Search, RefreshCw, Bot, User, Pause, ChevronDown } from "lucide-react";
+import { Search, RefreshCw, Bot, User, Pause, ChevronDown, Bell, BellOff } from "lucide-react";
+import { cn } from "@/lib/utils/cn";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 
@@ -38,7 +39,7 @@ const STATUS_TABS: { value: StatusFilter; label: string }[] = [
 const CATEGORIES = ["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"];
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
-export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {}) {
+export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds = [] }: { assignedAgentId?: string; currentAgentId?: string; initialFollowedIds?: number[] } = {}) {
   const [users, setUsers] = useState<ConversationItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -54,13 +55,14 @@ export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {})
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [followedIds, setFollowedIds] = useState<Set<number>>(() => new Set(initialFollowedIds));
   const wsRef = useRef<WebSocket | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
 
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ limit: "100", skipCount: "true" });
     if (status !== "ALL") params.set("status", status);
     if (search) params.set("search", search);
     if (category) params.set("category", category);
@@ -138,15 +140,24 @@ export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {})
     };
   }, []);
 
-  async function handleTakeover(convId: number) {
-    setActionLoading(convId + "_takeover");
-    await fetch(`/api/conversations/${convId}/control`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "takeover" }),
+  async function toggleFollow(e: React.MouseEvent, convId: number) {
+    e.preventDefault();
+    const isFollowing = followedIds.has(convId);
+    setFollowedIds((prev) => {
+      const next = new Set(prev);
+      isFollowing ? next.delete(convId) : next.add(convId);
+      return next;
     });
-    setActionLoading(null);
-    fetchData(true);
+    await fetch(`/api/conversations/${convId}/follow`, {
+      method: isFollowing ? "DELETE" : "POST",
+    }).catch(() => {
+      // rollback on error
+      setFollowedIds((prev) => {
+        const next = new Set(prev);
+        isFollowing ? next.add(convId) : next.delete(convId);
+        return next;
+      });
+    });
   }
 
   async function handleResumeAI(convId: number) {
@@ -349,7 +360,7 @@ export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {})
                       {conv.lastMessageAt && (
                         <span className="text-[11px] text-gray-400">{formatRelativeTime(conv.lastMessageAt)}</span>
                       )}
-                      {conv.isAiPaused && aiEnabled ? (
+                      {conv.isAiPaused && aiEnabled && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -358,17 +369,22 @@ export function LiveFeed({ assignedAgentId }: { assignedAgentId?: string } = {})
                         >
                           Resume AI
                         </Button>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          loading={actionLoading === conv.id + "_takeover"}
-                          onClick={(e) => { e.preventDefault(); handleTakeover(conv.id); }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          Take over
-                        </Button>
                       )}
+                      <button
+                        onClick={(e) => toggleFollow(e, conv.id)}
+                        title={followedIds.has(conv.id) ? "Unfollow" : "Follow to get notified"}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                          followedIds.has(conv.id)
+                            ? "text-violet-600 bg-violet-50 hover:bg-violet-100"
+                            : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                        )}
+                      >
+                        {followedIds.has(conv.id)
+                          ? <><Bell className="w-3 h-3" /> Following</>
+                          : <><BellOff className="w-3 h-3" /> Follow</>
+                        }
+                      </button>
                     </div>
                   </div>
                 </div>

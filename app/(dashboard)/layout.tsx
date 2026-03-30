@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
-import { Sidebar } from "@/components/layout/sidebar";
+import { BottomNav } from "@/components/layout/bottom-nav";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
+import { ChatTabsProvider } from "@/lib/contexts/chat-tabs-context";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth/cookies";
 
 export default async function DashboardLayout({
@@ -33,13 +34,15 @@ export default async function DashboardLayout({
   const agentToken = cookieStore.get(ACCESS_TOKEN_COOKIE)?.value ?? "";
 
   return (
-    <NotificationProvider agentId={agent.id} agentToken={agentToken} initialUnread={unreadCount}>
-      <div className="flex h-screen overflow-hidden bg-gray-50">
-        <Sidebar agent={agent} />
-        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {children}
-        </main>
-      </div>
-    </NotificationProvider>
+    <ChatTabsProvider>
+      <NotificationProvider agentId={agent.id} agentToken={agentToken} initialUnread={unreadCount}>
+        <div className="flex flex-col h-screen overflow-hidden bg-gray-50">
+          <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {children}
+          </main>
+          <BottomNav agent={agent} />
+        </div>
+      </NotificationProvider>
+    </ChatTabsProvider>
   );
 }

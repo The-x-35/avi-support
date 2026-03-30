@@ -11,6 +11,7 @@ import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, 
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
+import { useChatTabs } from "@/lib/contexts/chat-tabs-context";
 
 // ─── Media upload ─────────────────────────────────────────────────────────────
 const ALLOWED_MIME = new Set([
@@ -151,6 +152,7 @@ interface ConversationViewProps {
 
 
 export function ConversationView({ conversation: initial, currentAgentId }: ConversationViewProps) {
+  const { openTab } = useChatTabs();
   const [conv, setConv] = useState(initial);
   const [messages, setMessages] = useState<Message[]>(
     initial.messages.map((m) => ({ ...m, isPrivate: (m as Message & { isPrivate?: boolean }).isPrivate ?? false }))
@@ -183,7 +185,8 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   // Canned responses
   const [cannedResponses, setCannedResponses] = useState<{ id: string; title: string; content: string }[]>([]);
-  const [cannedOpen, setCannedOpen] = useState(false);
+  // Quick reply panel — track which item was last clicked for "click again to send"
+  const [lastClickedCanned, setLastClickedCanned] = useState<string | null>(null);
   // Slash command autocomplete
   const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed, "" = show all
   const [slashIndex, setSlashIndex] = useState(0);
@@ -242,6 +245,12 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       .then((data) => setAgents(Array.isArray(data) ? data : []))
       .catch(() => {});
   }, []);
+
+  // Register this conversation as an open tab in the bottom nav
+  useEffect(() => {
+    const label = conv.user.email ?? conv.user.externalId ?? "User";
+    openTab(String(conv.id), label, conv.id);
+  }, [conv.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch canned responses
   useEffect(() => {
@@ -962,37 +971,6 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
         {/* Reply input: with AI off, agents can always reply; with AI on, takeover/pause rules apply */}
         {(!aiEnabled || conv.isAiPaused || conv.assignedAgentId === currentAgentId) && (
           <div className="bg-white border-t border-gray-100 p-4 shrink-0 space-y-2">
-            {/* Canned responses */}
-            {cannedResponses.length > 0 && (
-              <div className="relative">
-                <button
-                  onClick={() => setCannedOpen((o) => !o)}
-                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 transition-colors"
-                >
-                  <Zap className="w-3 h-3" />
-                  Quick replies
-                  <ChevronDown className={cn("w-3 h-3 text-gray-400 transition-transform", cannedOpen && "rotate-180")} />
-                </button>
-                {cannedOpen && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setCannedOpen(false)} />
-                    <div className="absolute bottom-full left-0 mb-2 w-72 bg-white border border-gray-100 rounded-xl shadow-xl z-20 overflow-hidden max-h-64 overflow-y-auto">
-                      {cannedResponses.map((cr) => (
-                        <button
-                          key={cr.id}
-                          onClick={() => { setInputText(cr.content); setCannedOpen(false); inputRef.current?.focus(); }}
-                          className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
-                        >
-                          <p className="text-xs font-medium text-gray-800">{cr.title}</p>
-                          <p className="text-[11px] text-gray-400 truncate mt-0.5">{cr.content}</p>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
             {/* Slash command autocomplete */}
             {slashQuery !== null && slashMatches.length > 0 && (
               <div className="bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden">
@@ -1203,7 +1181,15 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       </div>
 
       {/* Right panel — context */}
-      <div className="w-72 shrink-0 flex flex-col overflow-y-auto bg-white relative">
+      <div
+        className="w-72 shrink-0 flex flex-col overflow-y-auto relative"
+        style={{
+          background: "rgba(255,255,255,0.88)",
+          backdropFilter: "blur(16px)",
+          WebkitBackdropFilter: "blur(16px)",
+          borderLeft: "1px solid rgba(0,0,0,0.05)",
+        }}
+      >
         {/* User info */}
         <div className="p-5 border-b border-gray-100">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">User</h3>
@@ -1222,6 +1208,50 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             </div>
           </Link>
         </div>
+
+        {/* Quick replies */}
+        {cannedResponses.length > 0 && (
+          <div className="p-5 border-b border-gray-100">
+            <div className="flex items-center gap-1.5 mb-3">
+              <Zap className="w-3 h-3 text-gray-400" />
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Quick Replies</h3>
+            </div>
+            <div className="space-y-1">
+              {cannedResponses.map((cr) => {
+                const isSelected = lastClickedCanned === cr.id;
+                return (
+                  <button
+                    key={cr.id}
+                    onClick={() => {
+                      if (isSelected) {
+                        if (inputRef.current) inputRef.current.innerText = cr.content;
+                        sendReply();
+                        setLastClickedCanned(null);
+                      } else {
+                        setInputText(cr.content);
+                        setLastClickedCanned(cr.id);
+                        inputRef.current?.focus();
+                      }
+                    }}
+                    className={cn(
+                      "w-full text-left px-3 py-2.5 rounded-xl transition-all",
+                      isSelected ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-700"
+                    )}
+                  >
+                    <p className={cn("text-xs font-medium", isSelected ? "text-white" : "text-gray-800")}>
+                      {cr.title}
+                    </p>
+                    {isSelected ? (
+                      <p className="text-[11px] text-white/50 mt-0.5">Click again to send</p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 truncate mt-0.5">{cr.content}</p>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Conversation info — editable */}
         <div className="p-5 border-b border-gray-100 space-y-1">

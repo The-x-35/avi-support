@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import { CategoryPicker } from "./category-picker";
-import { getChatSession } from "@/lib/auth/chat-token";
+import { getChatSession, getChatToken } from "@/lib/auth/chat-token";
 
 export default async function ChatHomePage() {
-  const session = await getChatSession();
-  if (!session) redirect("/chat/error");
-  return <CategoryPicker userId={session.userId} />;
+  const [session, token] = await Promise.all([getChatSession(), getChatToken()]);
+  if (!session || !token) redirect("/chat/error");
+  return <CategoryPicker userId={session.userId} wsToken={token} />;
 }

@@ -37,6 +37,16 @@ export async function getChatSession(): Promise<ChatSession | null> {
   }
 }
 
+/** Returns the raw JWT string from the cookie (for passing to WS auth) */
+export async function getChatToken(): Promise<string | null> {
+  try {
+    const cookieStore = await cookies();
+    return cookieStore.get(CHAT_SESSION_COOKIE)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** For API route handlers — reads from the request object */
 export async function getChatSessionFromRequest(req: NextRequest): Promise<ChatSession | null> {
   const token = req.cookies.get(CHAT_SESSION_COOKIE)?.value;

@@ -11,7 +11,6 @@ export async function PATCH(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
-
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
@@ -43,7 +42,11 @@ export async function PATCH(
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
 
-  const segment = await prisma.segment.update({ where: { id }, data });
+  // Admins can edit any segment; agents can only edit their own
+  const ownershipFilter = auth.payload.role === "ADMIN" ? { id } : { id, createdById: auth.payload.agentId };
+  const segment = await prisma.segment.update({ where: ownershipFilter, data }).catch(() => null);
+  if (!segment) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
   return NextResponse.json(segment);
 }
 
@@ -53,10 +56,14 @@ export async function DELETE(
 ) {
   const auth = await authenticateRequest(request);
   if ("error" in auth) return auth.error;
-
   if (!limiter.check(auth.payload.agentId)) return tooManyRequests();
 
   const { id } = await params;
-  await prisma.segment.delete({ where: { id } });
+
+  // Admins can delete any segment; agents can only delete their own
+  const ownershipFilter = auth.payload.role === "ADMIN" ? { id } : { id, createdById: auth.payload.agentId };
+  const deleted = await prisma.segment.deleteMany({ where: ownershipFilter });
+  if (deleted.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
   return NextResponse.json({ success: true });
 }

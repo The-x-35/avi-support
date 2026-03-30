@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
 import { IncomingMessage } from "http";
 import { verifyAccessToken } from "../lib/auth/jwt";
+import { jwtVerify } from "jose";
 import { prisma } from "../lib/db/prisma";
 import { getAIProvider } from "../lib/ai";
 import type { ConversationContext } from "../lib/ai/types";
@@ -470,11 +471,28 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           joinAgentRoom(ws, payload.agentId);
           touchAgent(payload.agentId);
         } else {
-          // User auth: token is externalUserId (simplified — production would verify app JWT)
+          // User auth: verify the signed chat JWT from the app backend
+          const chatSecretVal = process.env.CHAT_TOKEN_SECRET;
+          if (!chatSecretVal) {
+            sendToClient(ws, { type: "error", payload: { message: "Unauthorized" } });
+            ws.close();
+            return;
+          }
+          const chatSecret = new TextEncoder().encode(chatSecretVal);
+          let userId: string;
+          try {
+            const { payload } = await jwtVerify(event.token, chatSecret);
+            if (typeof payload.sub !== "string" || !payload.sub) throw new Error("invalid sub");
+            userId = payload.sub;
+          } catch {
+            sendToClient(ws, { type: "error", payload: { message: "Unauthorized" } });
+            ws.close();
+            return;
+          }
           clients.set(ws, {
             ws,
             role: "user",
-            userId: event.token,
+            userId,
             rooms: new Set(),
           });
         }
@@ -498,6 +516,17 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           payload: { code: "NOT_AUTHENTICATED", message: "Authenticate first" },
         });
         return;
+      }
+      // Users can only join rooms for their own conversations
+      if (client.role === "user") {
+        const conv = await prisma.conversation.findUnique({
+          where: { id: parseInt(event.conversationId) },
+          select: { user: { select: { externalId: true } } },
+        });
+        if (!conv || conv.user.externalId !== client.userId) {
+          sendToClient(ws, { type: "error", payload: { code: "FORBIDDEN", message: "Not found" } });
+          return;
+        }
       }
       joinRoom(ws, event.conversationId);
       if (event.ref) {
@@ -535,6 +564,9 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
           : null,
       ]);
       if (!conversation) return;
+
+      // Users can only send messages to their own conversations
+      if (client.role === "user" && conversation.user.externalId !== client.userId) return;
 
       let senderType: "USER" | "AGENT" = "USER";
       let senderId: string | undefined;
@@ -727,6 +759,12 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
     case "mark_read": {
       // Only users send read receipts
       if (!client || client.role !== "user") return;
+      // Verify the user owns this conversation before marking it read
+      const convOwner = await prisma.conversation.findUnique({
+        where: { id: parseInt(event.conversationId) },
+        select: { user: { select: { externalId: true } } },
+      });
+      if (!convOwner || convOwner.user.externalId !== client.userId) return;
       const readAt = new Date();
       await prisma.conversation.update({
         where: { id: parseInt(event.conversationId) },

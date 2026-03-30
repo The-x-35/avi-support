@@ -36,11 +36,13 @@ interface HistoryConversation {
 
 export function NewChatCreator({
   userId,
+  wsToken,
   category,
   name,
   initialMessage,
 }: {
   userId: string;
+  wsToken: string;
   category: string;
   name?: string;
   initialMessage?: string;
@@ -63,7 +65,7 @@ export function NewChatCreator({
     if (creating.current) return;
     creating.current = true;
 
-    userWsManager.init(userId);
+    userWsManager.init(userId, wsToken);
 
     fetch("/api/chat/create", {
       method: "POST",
@@ -153,6 +155,7 @@ export function NewChatCreator({
       <UserChat
         conversationId={conversationId}
         userId={userId}
+        wsToken={wsToken}
         initialMessage={combined}
         initialCategory={convCategory}
         skipWelcomeAnimation

@@ -223,6 +223,7 @@ function FireworksOverlay({ onDone }: { onDone: () => void }) {
 export function UserChat({
   conversationId,
   userId,
+  wsToken,
   initialMessage,
   initialCategory,
   skipWelcomeAnimation,
@@ -230,6 +231,7 @@ export function UserChat({
 }: {
   conversationId: string;
   userId: string;
+  wsToken?: string;
   initialMessage?: string;
   initialCategory?: string;
   skipWelcomeAnimation?: boolean;
@@ -393,7 +395,7 @@ export function UserChat({
 
   useEffect(() => {
     // Ensure persistent connection is alive for this user
-    userWsManager.init(userId);
+    if (wsToken) userWsManager.init(userId, wsToken);
     setWsError(false);
 
     // Subscribe to ready-state changes — only used for error banner + initial message trigger

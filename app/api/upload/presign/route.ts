@@ -8,6 +8,7 @@ import {
   MAX_IMAGE_BYTES, MAX_VIDEO_BYTES,
 } from "@/lib/r2";
 import { prisma } from "@/lib/db/prisma";
+import { getChatSessionFromRequest } from "@/lib/auth/chat-token";
 
 // ─── In-memory rate limiter ───────────────────────────────────────────────────
 // 10 presign requests per IP per 60 seconds
@@ -48,6 +49,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Verify chat session
+    const session = await getChatSessionFromRequest(req);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
     const { fileName, mimeType, fileSize, conversationId } = await req.json();
 
     const conversationIdInt = parseInt(conversationId, 10);
@@ -55,11 +60,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Verify the conversation exists and is active (not closed/resolved)
-    const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationIdInt },
-      select: { id: true, status: true },
-    });
+    // Verify the conversation exists, is active, and belongs to this user
+    const endUser = await prisma.endUser.findUnique({ where: { externalId: session.userId }, select: { id: true } });
+    const conversation = endUser
+      ? await prisma.conversation.findUnique({
+          where: { id: conversationIdInt, userId: endUser.id },
+          select: { id: true, status: true },
+        })
+      : null;
 
     if (!conversation) {
       return NextResponse.json({ error: "Invalid conversation" }, { status: 403 });

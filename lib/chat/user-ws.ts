@@ -17,6 +17,7 @@ type ReadyHandler = (ready: boolean) => void;
 class UserWsManager {
   private ws: WebSocket | null = null;
   private userId: string | null = null;
+  private wsToken: string | null = null;
   private _ready = false;
   private rooms = new Set<string>();
   private msgListeners = new Set<MessageHandler>();
@@ -26,11 +27,12 @@ class UserWsManager {
   private destroyed = false;
 
   /** Establish (or reuse) the connection for this userId. */
-  init(userId: string) {
+  init(userId: string, wsToken: string) {
     if (this.userId && this.userId !== userId) {
       this.teardown();
     }
     this.userId = userId;
+    this.wsToken = wsToken;
     this.destroyed = false;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
@@ -46,7 +48,7 @@ class UserWsManager {
 
     ws.onopen = () => {
       if (this.destroyed) { ws.close(); return; }
-      ws.send(JSON.stringify({ type: "auth", token: this.userId, role: "user" }));
+      ws.send(JSON.stringify({ type: "auth", token: this.wsToken, role: "user" }));
       // Rejoin any active rooms (e.g. after reconnect)
       for (const convId of this.rooms) {
         ws.send(JSON.stringify({ type: "join", conversationId: convId }));

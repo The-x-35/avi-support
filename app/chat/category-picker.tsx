@@ -29,7 +29,7 @@ interface PastConv {
   messages: { content: string; senderType: string }[];
 }
 
-export function CategoryPicker({ userId }: { userId: string }) {
+export function CategoryPicker({ userId, wsToken }: { userId: string; wsToken: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [pastConvs, setPastConvs] = useState<PastConv[]>([]);
@@ -40,7 +40,7 @@ export function CategoryPicker({ userId }: { userId: string }) {
   const historyPromiseRef = useRef<Promise<PastConv[]> | null>(null);
 
   useEffect(() => {
-    userWsManager.init(userId);
+    userWsManager.init(userId, wsToken);
 
     const promise = fetch("/api/chat/history")
       .then((r) => r.ok ? r.json() : { conversations: [] })

@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils/cn";
 import {
   LayoutDashboard, BarChart2, Filter, Settings, Bell,
-  CircleUser, MessageSquare, X, MessageCircle,
+  CircleUser, MessageSquare, X, MessageCircle, ChevronUp,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/notification-context";
 import { useChatTabs } from "@/lib/contexts/chat-tabs-context";
+import { Avatar } from "@/components/ui/avatar";
 
 const NAV_ITEMS = [
   { href: "/live",          label: "Chats",         icon: MessageSquare },
@@ -20,11 +22,88 @@ const NAV_ITEMS = [
   { href: "/settings",      label: "Settings",       icon: Settings },
 ];
 
+type AgentStatus = "ONLINE" | "AWAY" | "OFFLINE";
+
+const STATUS_CONFIG: Record<AgentStatus, { label: string; color: string; dot: string }> = {
+  ONLINE:  { label: "Online",  color: "text-emerald-600", dot: "bg-emerald-500" },
+  AWAY:    { label: "Away",    color: "text-amber-600",   dot: "bg-amber-400"   },
+  OFFLINE: { label: "Offline", color: "text-gray-400",    dot: "bg-gray-400"    },
+};
+
 interface BottomNavProps {
-  agent?: { id: string; name: string; email: string; avatarUrl?: string | null; role: string };
+  agent?: { id: string; name: string; email: string; avatarUrl?: string | null; role: string; status?: string };
 }
 
-export function BottomNav({ agent: _agent }: BottomNavProps) {
+function AgentStatusPicker({ agent }: { agent: NonNullable<BottomNavProps["agent"]> }) {
+  const [status, setStatus] = useState<AgentStatus>((agent.status as AgentStatus) ?? "ONLINE");
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  async function changeStatus(next: AgentStatus) {
+    if (next === status || saving) return;
+    setSaving(true);
+    setStatus(next);
+    setOpen(false);
+    await fetch("/api/agents/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: next }),
+    }).catch(() => {});
+    setSaving(false);
+  }
+
+  const cfg = STATUS_CONFIG[status];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-xl hover:bg-gray-100 transition-colors"
+        title="Set your status"
+      >
+        <div className="relative">
+          <Avatar name={agent.name} src={agent.avatarUrl} size="xs" />
+          <span className={cn("absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white", cfg.dot)} />
+        </div>
+        <div className="flex flex-col items-start leading-none">
+          <span className="text-[11px] font-semibold text-gray-800 leading-none">{agent.name.split(" ")[0]}</span>
+          <span className={cn("text-[10px] mt-0.5", cfg.color)}>{cfg.label}</span>
+        </div>
+        <ChevronUp className={cn("w-3 h-3 text-gray-400 transition-transform", open ? "" : "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-2 bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden min-w-[140px] py-1">
+          {(Object.entries(STATUS_CONFIG) as [AgentStatus, typeof STATUS_CONFIG[AgentStatus]][]).map(([key, val]) => (
+            <button
+              key={key}
+              onClick={() => changeStatus(key)}
+              className={cn(
+                "w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-gray-50",
+                status === key ? "font-semibold text-gray-900" : "text-gray-600"
+              )}
+            >
+              <span className={cn("w-2 h-2 rounded-full shrink-0", val.dot)} />
+              {val.label}
+              {status === key && <span className="ml-auto text-gray-300 text-[10px]">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function BottomNav({ agent }: BottomNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { unreadCount } = useNotifications();
@@ -36,6 +115,13 @@ export function BottomNav({ agent: _agent }: BottomNavProps) {
 
   return (
     <div className="shrink-0 flex items-center justify-center gap-3 px-6 py-3 bg-[#f5f5f7]">
+      {/* Agent status pill */}
+      {agent && (
+        <div className="flex items-center bg-white rounded-2xl border border-gray-100 shadow-sm px-1 py-1.5">
+          <AgentStatusPicker agent={agent} />
+        </div>
+      )}
+
       {/* Nav items card */}
       <div className="flex items-center bg-white rounded-2xl border border-gray-100 shadow-sm px-2 py-2 gap-0.5">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => {

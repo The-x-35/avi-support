@@ -22,7 +22,7 @@ export default async function DashboardLayout({
   const [agent, unreadCount, cookieStore] = await Promise.all([
     prisma.agent.findUnique({
       where: { id: session.agentId },
-      select: { id: true, name: true, email: true, avatarUrl: true, role: true },
+      select: { id: true, name: true, email: true, avatarUrl: true, role: true, status: true },
     }),
     prisma.notification.count({ where: { agentId: session.agentId, isRead: false } }),
     cookies(),

@@ -423,9 +423,24 @@ export function UserChat({
       switch (evt.type) {
         case "message": {
           const p = evt.payload;
-          if (p.conversationId !== conversationId || p.senderType === "USER" || p.isPrivate) return;
+          if (p.conversationId !== conversationId || p.isPrivate) return;
           setMessages((prev) => {
             if (prev.some((m) => m.id === p.id)) return prev;
+            if (p.senderType === "USER") {
+              // Replace matching temp placeholder with the real persisted message
+              const tempIdx = prev.findIndex((m) => m.id.startsWith("temp_") && m.content === p.content);
+              if (tempIdx !== -1) {
+                const next = [...prev];
+                next[tempIdx] = { ...next[tempIdx], id: p.id, createdAt: p.createdAt };
+                return next;
+              }
+              // No temp to replace — add it (e.g. multi-tab or reconnect scenario)
+              return [...prev, {
+                id: p.id, senderType: p.senderType, content: p.content,
+                isStreaming: false, createdAt: p.createdAt, agent: null,
+                media: p.media ?? undefined,
+              }];
+            }
             return [...prev, {
               id: p.id, senderType: p.senderType, content: p.content,
               isStreaming: false, createdAt: p.createdAt,
@@ -637,14 +652,7 @@ export function UserChat({
           position: "sticky", top: 0, zIndex: 10,
         }}
       >
-        <div className="flex items-center justify-between px-2 py-2">
-          <button
-            onClick={() => router.push(`/chat?userId=${encodeURIComponent(userId)}`)}
-            className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400 active:bg-gray-100 transition-colors"
-            style={{ touchAction: "manipulation" }}
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
+        <div className="flex items-center justify-end px-2 py-2">
           <button
             onClick={openHistory}
             className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400 active:bg-gray-100 transition-colors"

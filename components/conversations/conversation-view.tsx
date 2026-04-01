@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Zap, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw } from "lucide-react";
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
@@ -192,6 +192,10 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [cannedResponses, setCannedResponses] = useState<{ id: string; title: string; content: string }[]>([]);
   // Quick reply panel — track which item was last clicked for "click again to send"
   const [lastClickedCanned, setLastClickedCanned] = useState<string | null>(null);
+
+  // AI suggested replies
+  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   // Slash command autocomplete
   const [slashQuery, setSlashQuery] = useState<string | null>(null); // null = closed, "" = show all
   const [slashIndex, setSlashIndex] = useState(0);
@@ -279,9 +283,23 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       .catch(() => {});
   }, []);
 
+  // Fetch AI suggested replies
+  const fetchSuggestions = useCallback(() => {
+    setSuggestionsLoading(true);
+    fetch(`/api/conversations/${conv.id}/suggestions`)
+      .then((r) => r.ok ? r.json() : { suggestions: [] })
+      .then((data) => setAiSuggestions(data.suggestions ?? []))
+      .catch(() => setAiSuggestions([]))
+      .finally(() => setSuggestionsLoading(false));
+  }, [conv.id]);
+
+  useEffect(() => {
+    fetchSuggestions();
+  }, [conv.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fetch sidebar conversations
   useEffect(() => {
-    fetch("/api/conversations?limit=50")
+    fetch("/api/conversations?limit=50&status=OPEN")
       .then((r) => r.json())
       .then((d) => setSidebarConvs(d.conversations ?? []))
       .catch(() => {});
@@ -1306,49 +1324,61 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           </Link>
         </div>
 
-        {/* Quick replies */}
-        {cannedResponses.length > 0 && (
-          <div className="p-5 border-b border-gray-100">
-            <div className="flex items-center gap-1.5 mb-3">
-              <Zap className="w-3 h-3 text-gray-400" />
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Quick Replies</h3>
+        {/* AI Suggested Replies */}
+        <div className="p-5 border-b border-gray-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3 text-violet-400" />
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">AI Suggestions</h3>
             </div>
-            <div className="space-y-1">
-              {cannedResponses.map((cr) => {
-                const isSelected = lastClickedCanned === cr.id;
+            <button
+              onClick={fetchSuggestions}
+              disabled={suggestionsLoading}
+              className="text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-40"
+            >
+              <RefreshCw className={cn("w-3 h-3", suggestionsLoading && "animate-spin")} />
+            </button>
+          </div>
+          {suggestionsLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-12 bg-gray-50 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : aiSuggestions.length === 0 ? (
+            <p className="text-[11px] text-gray-400">No suggestions yet</p>
+          ) : (
+            <div className="space-y-1.5">
+              {aiSuggestions.map((suggestion, i) => {
+                const isSelected = lastClickedCanned === `ai-${i}`;
                 return (
                   <button
-                    key={cr.id}
+                    key={i}
                     onClick={() => {
                       if (isSelected) {
-                        if (inputRef.current) inputRef.current.innerText = cr.content;
+                        if (inputRef.current) inputRef.current.innerText = suggestion;
                         sendReply();
                         setLastClickedCanned(null);
                       } else {
-                        setInputText(cr.content);
-                        setLastClickedCanned(cr.id);
+                        setInputText(suggestion);
+                        setLastClickedCanned(`ai-${i}`);
                         inputRef.current?.focus();
                       }
                     }}
                     className={cn(
                       "w-full text-left px-3 py-2.5 rounded-xl transition-all",
-                      isSelected ? "bg-gray-900 text-white" : "hover:bg-gray-50 text-gray-700"
+                      isSelected ? "bg-violet-600 text-white" : "hover:bg-violet-50 border border-transparent hover:border-violet-100 text-gray-700"
                     )}
                   >
-                    <p className={cn("text-xs font-medium", isSelected ? "text-white" : "text-gray-800")}>
-                      {cr.title}
+                    <p className={cn("text-[11px] leading-relaxed", isSelected ? "text-white" : "text-gray-700")}>
+                      {isSelected ? <span className="font-medium">Click again to send · </span> : null}{suggestion}
                     </p>
-                    {isSelected ? (
-                      <p className="text-[11px] text-white/50 mt-0.5">Click again to send</p>
-                    ) : (
-                      <p className="text-[11px] text-gray-400 truncate mt-0.5">{cr.content}</p>
-                    )}
                   </button>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Conversation info — editable */}
         <div className="p-5 border-b border-gray-100 space-y-1">

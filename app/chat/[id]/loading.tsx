@@ -1,4 +1,4 @@
-import { ChevronLeft, Clock } from "lucide-react";
+import { Clock } from "lucide-react";
 
 export default function ChatLoading() {
   return (
@@ -16,10 +16,7 @@ export default function ChatLoading() {
           zIndex: 10,
         }}
       >
-        <div className="flex items-center justify-between px-2 py-2">
-          <div className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400">
-            <ChevronLeft className="w-5 h-5" />
-          </div>
+        <div className="flex items-center justify-end px-2 py-2">
           <div className="flex items-center justify-center w-10 h-10 rounded-full text-gray-300">
             <Clock className="w-[18px] h-[18px]" />
           </div>

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/prisma";
+import { Prisma } from "@prisma/client";
 import { startOfDay, subDays, eachDayOfInterval } from "date-fns";
 
 export async function getOverviewStats() {
@@ -72,12 +73,13 @@ export async function getOverviewStats() {
   };
 }
 
-export async function getTagDistribution(days = 7, source?: "AGENT" | "AI") {
-  const since = startOfDay(subDays(new Date(), days));
+export async function getTagDistribution(days = 7, source?: "AGENT" | "AI", dateFrom?: Date, dateTo?: Date) {
+  const since = dateFrom ?? startOfDay(subDays(new Date(), days));
+  const until = dateTo ?? undefined;
 
   const tags = await prisma.tag.groupBy({
     by: ["definitionId"],
-    where: { createdAt: { gte: since }, ...(source ? { source } : {}) },
+    where: { createdAt: { gte: since, ...(until ? { lte: until } : {}) }, ...(source ? { source } : {}) },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
     take: 50,
@@ -138,12 +140,13 @@ export async function getSentimentTrend(days = 14) {
   return Array.from(byDay.entries()).map(([date, counts]) => ({ date, ...counts }));
 }
 
-export async function getTopIssues(days = 7, source?: "AGENT" | "AI") {
-  const since = startOfDay(subDays(new Date(), days));
+export async function getTopIssues(days = 7, source?: "AGENT" | "AI", dateFrom?: Date, dateTo?: Date) {
+  const since = dateFrom ?? startOfDay(subDays(new Date(), days));
+  const until = dateTo ?? undefined;
 
   const issues = await prisma.tag.groupBy({
     by: ["definitionId"],
-    where: { createdAt: { gte: since }, ...(source ? { source } : {}) },
+    where: { createdAt: { gte: since, ...(until ? { lte: until } : {}) }, ...(source ? { source } : {}) },
     _count: { id: true },
     orderBy: { _count: { id: "desc" } },
     take: 40,
@@ -162,8 +165,8 @@ export async function getTopIssues(days = 7, source?: "AGENT" | "AI") {
   }));
 }
 
-export async function getVolumeByDay(days = 30) {
-  const since = startOfDay(subDays(new Date(), days));
+export async function getVolumeByDay(days = 30, dateFrom?: Date, dateTo?: Date) {
+  const since = dateFrom ?? startOfDay(subDays(new Date(), days));
 
   const results = await prisma.$queryRaw<
     Array<{ date: string; count: bigint }>
@@ -171,6 +174,7 @@ export async function getVolumeByDay(days = 30) {
     SELECT DATE("createdAt") as date, COUNT(*) as count
     FROM "Conversation"
     WHERE "createdAt" >= ${since}
+      ${dateTo ? Prisma.sql`AND "createdAt" <= ${dateTo}` : Prisma.empty}
     GROUP BY DATE("createdAt")
     ORDER BY date ASC
   `;

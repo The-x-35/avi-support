@@ -51,8 +51,6 @@ export async function GET(request: NextRequest) {
         role: "AGENT",
       },
       update: {
-        name: googleUser.name,
-        avatarUrl: googleUser.picture,
         email: googleUser.email,
       },
     });

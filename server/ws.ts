@@ -639,26 +639,12 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Notify agents of new user message (skip private agent messages)
       if (senderType === "USER" && !message.isPrivate) {
-        let primaryIds: string[];
-        if (conversation.assignedAgentId) {
-          const assignedAgent = await prisma.agent.findUnique({
-            where: { id: conversation.assignedAgentId },
-            select: { status: true },
-          });
-          primaryIds = assignedAgent?.status === "ONLINE" ? [conversation.assignedAgentId] : [];
-        } else {
-          primaryIds = (await prisma.agent.findMany({ where: { isActive: true, status: "ONLINE" }, select: { id: true } })).map((a) => a.id);
-        }
-
-        // Also notify followers who aren't already in primaryIds
-        const followerRows = await prisma.conversationFollower.findMany({
-          where: { conversationId: convNumId },
-          select: { agentId: true },
+        // All online active agents get notified of every chat
+        const onlineAgents = await prisma.agent.findMany({
+          where: { isActive: true, status: "ONLINE" },
+          select: { id: true },
         });
-        const primarySet = new Set(primaryIds);
-        const followerIds = followerRows.map((f) => f.agentId).filter((id) => !primarySet.has(id));
-
-        const notifyIds = [...primaryIds, ...followerIds];
+        const notifyIds = onlineAgents.map((a) => a.id);
         const notifTitle = `New message from ${conversation.user.name ?? conversation.user.externalId}`;
         const notifBody = content.slice(0, 100);
         createNotifications({
@@ -913,15 +899,25 @@ const wss = new WebSocketServer({
 
 httpServer.listen(PORT, () => {});
 
+// Per-connection message queues — ensures auth always fully completes before join/send_message
+const messageQueues = new Map<WebSocket, Promise<void>>();
+
 wss.on("connection", (ws: WebSocket) => {
   // Initialize unauthenticated client entry
   clients.set(ws, { ws, role: "user", rooms: new Set() });
+  messageQueues.set(ws, Promise.resolve());
 
   ws.on("message", (data: Buffer) => {
-    handleClientMessage(ws, data.toString());
+    // Chain each message handler so they run sequentially per connection.
+    // This prevents auth from racing with join/send_message on connect.
+    const prev = messageQueues.get(ws) ?? Promise.resolve();
+    const next = prev.then(() => handleClientMessage(ws, data.toString()));
+    messageQueues.set(ws, next);
+    next.catch(() => {});
   });
 
   ws.on("close", () => {
+    messageQueues.delete(ws);
     const client = clients.get(ws);
     if (client?.role === "agent" && client.agentId) {
       leaveAgentRoom(ws, client.agentId);

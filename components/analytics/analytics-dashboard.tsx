@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { BubbleChart, type BubbleItem } from "./bubble-chart";
 import { PieChartComponent } from "./pie-chart";
 import { StatCard } from "@/components/ui/stat-card";
 import { BarChart } from "./bar-chart";
-import { BarChart2, TrendingUp, Tag, AlertTriangle } from "lucide-react";
+import { BarChart2, TrendingUp, Tag, AlertTriangle, Calendar } from "lucide-react";
 
 const SENTIMENT_NAMES = new Set(["positive", "neutral", "frustrated", "angry"]);
 
@@ -16,7 +17,7 @@ const SENTIMENT_COLORS: Record<string, string> = {
   angry: "#ef4444",
 };
 
-type Period = "7" | "14" | "30";
+type Period = "1" | "7" | "14" | "30" | "custom";
 
 interface TagItem {
   name?: string | null;
@@ -24,8 +25,15 @@ interface TagItem {
   count: number;
 }
 
+function toDateInputValue(d: Date) {
+  return d.toISOString().split("T")[0];
+}
+
 export function AnalyticsDashboard() {
+  const router = useRouter();
   const [period, setPeriod] = useState<Period>("7");
+  const [customFrom, setCustomFrom] = useState(() => toDateInputValue(new Date(Date.now() - 14 * 86400_000)));
+  const [customTo, setCustomTo] = useState(() => toDateInputValue(new Date()));
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{
     overview: Record<string, number>;
@@ -35,24 +43,37 @@ export function AnalyticsDashboard() {
   } | null>(null);
 
   useEffect(() => {
+    const isCustom = period === "custom";
+    if (isCustom && (!customFrom || !customTo)) return;
+
+    const qs = isCustom
+      ? `dateFrom=${customFrom}&dateTo=${customTo}`
+      : `days=${period}`;
+
     setLoading(true);
     Promise.all([
       fetch(`/api/analytics?type=overview`).then((r) => r.json()),
-      fetch(`/api/analytics?type=agent_tags&days=${period}`).then((r) => r.json()),
-      fetch(`/api/analytics?type=ai_tags&days=${period}`).then((r) => r.json()),
-      fetch(`/api/analytics?type=volume&days=${period}`).then((r) => r.json()),
+      fetch(`/api/analytics?type=agent_tags&${qs}`).then((r) => r.json()),
+      fetch(`/api/analytics?type=ai_tags&${qs}`).then((r) => r.json()),
+      fetch(`/api/analytics?type=volume&${qs}`).then((r) => r.json()),
     ])
       .then(([overview, agentTags, aiTags, volume]) => {
         setData({ overview, agentTags, aiTags, volume });
       })
       .finally(() => setLoading(false));
-  }, [period]);
+  }, [period, customFrom, customTo]);
 
   const periodOptions: { value: Period; label: string }[] = [
-    { value: "7", label: "7 days" },
-    { value: "14", label: "14 days" },
-    { value: "30", label: "30 days" },
+    { value: "1",      label: "24h"    },
+    { value: "7",      label: "7 days" },
+    { value: "14",     label: "14 days"},
+    { value: "30",     label: "30 days"},
+    { value: "custom", label: "Custom" },
   ];
+
+  function handleBubbleClick(tagName: string) {
+    router.push(`/live?tag=${encodeURIComponent(tagName)}`);
+  }
 
   if (loading || !data) {
     return (
@@ -72,7 +93,6 @@ export function AnalyticsDashboard() {
     );
   }
 
-  // Sentiment comes from agent-applied tags (ops team sentiment labels)
   const sentimentData = data.agentTags
     .filter((t) => SENTIMENT_NAMES.has(t.name?.toLowerCase() ?? ""))
     .map((t) => ({
@@ -87,20 +107,44 @@ export function AnalyticsDashboard() {
   return (
     <div className="space-y-6">
       {/* Period selector */}
-      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-        {periodOptions.map((opt) => (
-          <button
-            key={opt.value}
-            onClick={() => setPeriod(opt.value)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              period === opt.value
-                ? "bg-white text-gray-900 shadow-sm"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          {periodOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setPeriod(opt.value)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                period === opt.value
+                  ? "bg-white text-gray-900 shadow-sm"
+                  : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {opt.value === "custom" && <Calendar className="w-3 h-3" />}
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {period === "custom" && (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={customFrom}
+              max={customTo}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+            <span className="text-xs text-gray-400">to</span>
+            <input
+              type="date"
+              value={customTo}
+              min={customFrom}
+              max={toDateInputValue(new Date())}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-900"
+            />
+          </div>
+        )}
       </div>
 
       {/* Stats */}
@@ -132,9 +176,9 @@ export function AnalyticsDashboard() {
         <div className="col-span-2 bg-white border border-gray-100 rounded-xl p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-gray-900">Agent Tags</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Applied by ops team across conversations</p>
+            <p className="text-xs text-gray-400 mt-0.5">Click a bubble to view matching conversations</p>
           </div>
-          <BubbleChart data={opsTags} />
+          <BubbleChart data={opsTags} onBubbleClick={handleBubbleClick} />
         </div>
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <div className="mb-4">
@@ -149,9 +193,9 @@ export function AnalyticsDashboard() {
       <div className="bg-white border border-gray-100 rounded-xl p-5">
         <div className="mb-4">
           <h3 className="text-sm font-semibold text-gray-900">AI-Detected Issues</h3>
-          <p className="text-xs text-gray-400 mt-0.5">Topics auto-tagged by AI from chat content</p>
+          <p className="text-xs text-gray-400 mt-0.5">Click a bubble to view matching conversations</p>
         </div>
-        <BubbleChart data={aiTags} />
+        <BubbleChart data={aiTags} onBubbleClick={handleBubbleClick} />
       </div>
 
       {/* Daily volume */}

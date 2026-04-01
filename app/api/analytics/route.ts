@@ -29,16 +29,21 @@ export const GET = withTiming("GET /api/analytics", async (request: NextRequest)
   }
 
   const rawDays = parseInt(searchParams.get("days") ?? "7");
-  const days = Math.min(Math.max(1, rawDays), 90); // clamp 1–90 days
+  const days = Math.min(Math.max(1, rawDays), 365);
+
+  const dateFromRaw = searchParams.get("dateFrom");
+  const dateToRaw = searchParams.get("dateTo");
+  const dateFrom = dateFromRaw ? new Date(dateFromRaw) : undefined;
+  const dateTo = dateToRaw ? new Date(dateToRaw) : undefined;
 
   switch (type) {
     case "overview":          return NextResponse.json(await getOverviewStats());
-    case "tag_distribution":  return NextResponse.json(await getTagDistribution(days));
-    case "agent_tags":        return NextResponse.json(await getTagDistribution(days, "AGENT"));
-    case "ai_tags":           return NextResponse.json(await getTagDistribution(days, "AI"));
+    case "tag_distribution":  return NextResponse.json(await getTagDistribution(days, undefined, dateFrom, dateTo));
+    case "agent_tags":        return NextResponse.json(await getTagDistribution(days, "AGENT", dateFrom, dateTo));
+    case "ai_tags":           return NextResponse.json(await getTagDistribution(days, "AI", dateFrom, dateTo));
     case "sentiment_trend":   return NextResponse.json(await getSentimentTrend(days));
-    case "top_issues":        return NextResponse.json(await getTopIssues(days, "AI"));
-    case "volume":            return NextResponse.json(await getVolumeByDay(days));
+    case "top_issues":        return NextResponse.json(await getTopIssues(days, "AI", dateFrom, dateTo));
+    case "volume":            return NextResponse.json(await getVolumeByDay(days, dateFrom, dateTo));
     default:                  return NextResponse.json({ error: "Unknown type" }, { status: 400 });
   }
 });

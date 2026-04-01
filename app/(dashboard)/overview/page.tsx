@@ -54,9 +54,7 @@ export default function OverviewPage() {
           <OverviewStats />
         </Suspense>
         <div className="grid grid-cols-2 gap-4">
-          <Suspense fallback={<ChartSkeleton />}>
-            <TopIssuesChart />
-          </Suspense>
+          <TopIssuesChart />
           <Suspense fallback={<ChartSkeleton />}>
             <SentimentChart />
           </Suspense>

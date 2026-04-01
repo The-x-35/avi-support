@@ -185,14 +185,7 @@ export function NewChatCreator({
           position: "sticky", top: 0, zIndex: 10,
         }}
       >
-        <div className="flex items-center justify-between px-2 py-2">
-          <button
-            onClick={() => router.push("/chat")}
-            className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400 active:bg-gray-100 transition-colors"
-            style={{ touchAction: "manipulation" }}
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
+        <div className="flex items-center justify-end px-2 py-2">
           <button
             onClick={openHistory}
             className="flex items-center justify-center w-10 h-10 rounded-full text-gray-400 active:bg-gray-100 transition-colors"

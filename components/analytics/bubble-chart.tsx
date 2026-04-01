@@ -66,7 +66,7 @@ function fitText(text: string, r: number): string {
   return text.slice(0, Math.max(maxChars - 1, 3)) + "…";
 }
 
-export function BubbleChart({ data }: { data: BubbleItem[] }) {
+export function BubbleChart({ data, onBubbleClick }: { data: BubbleItem[]; onBubbleClick?: (name: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ width: 600, height: 380 });
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
@@ -118,9 +118,10 @@ export function BubbleChart({ data }: { data: BubbleItem[] }) {
               key={d.name}
               transform={`translate(${x},${y})`}
               style={{
-                cursor: "default",
+                cursor: onBubbleClick ? "pointer" : "default",
                 transition: "transform 0.15s ease",
               }}
+              onClick={() => onBubbleClick?.(d.name)}
               onMouseEnter={(e) => {
                 setHoveredName(d.name);
                 const svgRect = (e.currentTarget.closest("svg") as SVGSVGElement)

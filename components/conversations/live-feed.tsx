@@ -39,17 +39,17 @@ const STATUS_TABS: { value: StatusFilter; label: string }[] = [
 const CATEGORIES = ["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"];
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
-export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds = [] }: { assignedAgentId?: string; currentAgentId?: string; initialFollowedIds?: number[] } = {}) {
+export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds = [], initialTag = null }: { assignedAgentId?: string; currentAgentId?: string; initialFollowedIds?: number[]; initialTag?: string | null } = {}) {
   const [users, setUsers] = useState<ConversationItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<StatusFilter>("OPEN");
+  const [status, setStatus] = useState<StatusFilter>(initialTag ? "ALL" : "OPEN");
   const [category, setCategory] = useState<string | null>(null);
   const [priority, setPriority] = useState<string | null>(null);
   const [aiPaused, setAiPaused] = useState(false);
   const [unassigned, setUnassigned] = useState(false);
-  const [tag, setTag] = useState<string | null>(null);
+  const [tag, setTag] = useState<string | null>(initialTag);
   const [tagDefs, setTagDefs] = useState<{ id: string; name: string; color: string | null }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -96,6 +96,12 @@ export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds =
     const interval = setInterval(() => fetchData(true), 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Sync tag + status from URL when navigating to /live?tag=X (component may already be mounted)
+  useEffect(() => {
+    setTag(initialTag ?? null);
+    if (initialTag) setStatus("ALL");
+  }, [initialTag]);
 
   useEffect(() => {
     fetch("/api/settings/workspace")

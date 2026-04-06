@@ -28,6 +28,7 @@ model Agent {
   notifications     Notification[]
   pushSubscriptions PushSubscription[]
   followedConversations ConversationFollower[]
+  escalationTeams       EscalationTeamMember[]
 
   @@index([email])
   @@index([googleId])
@@ -91,7 +92,7 @@ model EndUser {
 model Conversation {
   id              Int                @id @default(autoincrement())
   userId          String
-  category        Category           @default(GENERAL)
+  categories      Category[]
   status          ConversationStatus @default(OPEN)
   isAiPaused      Boolean            @default(false)
   assignedAgentId String?
@@ -110,6 +111,7 @@ model Conversation {
   tags            Tag[]
   notes           Note[]
   followers       ConversationFollower[]
+  escalations     Escalation[]
 
   @@index([userId])
   @@index([status])
@@ -160,11 +162,12 @@ model Message {
 }
 
 model TagDefinition {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  color     String?
-  createdAt DateTime @default(now())
-  tags      Tag[]
+  id         String     @id @default(uuid())
+  name       String     @unique
+  color      String?
+  categories Category[]
+  createdAt  DateTime   @default(now())
+  tags       Tag[]
 }
 
 model Tag {
@@ -268,6 +271,55 @@ model PushSubscription {
   agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([agentId])
+}
+
+model EscalationTeam {
+  id          String                 @id @default(uuid())
+  name        String                 @unique
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  members     EscalationTeamMember[]
+  escalations Escalation[]
+}
+
+model EscalationTeamMember {
+  id        String         @id @default(uuid())
+  teamId    String
+  agentId   String
+  createdAt DateTime       @default(now())
+  team      EscalationTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  agent     Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, agentId])
+  @@index([teamId])
+  @@index([agentId])
+}
+
+model Escalation {
+  id             String           @id @default(uuid())
+  conversationId Int
+  title          String
+  teamId         String?
+  categories     Category[]
+  tagIds         String[]
+  notes          String?
+  dueDate        DateTime?
+  status         EscalationStatus @default(OPEN)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  team           EscalationTeam?  @relation(fields: [teamId], references: [id])
+
+  @@index([conversationId])
+  @@index([teamId])
+  @@index([status])
+}
+
+enum EscalationStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
 }
 
 enum NotificationType {

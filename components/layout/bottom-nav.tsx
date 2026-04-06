@@ -6,7 +6,7 @@ import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils/cn";
 import {
   LayoutDashboard, BarChart2, Filter, Settings, Bell,
-  CircleUser, MessageSquare, X, MessageCircle, ChevronUp,
+  CircleUser, MessageSquare, X, MessageCircle, ChevronUp, AlertTriangle,
 } from "lucide-react";
 import { useNotifications } from "@/components/notifications/notification-context";
 import { useChatTabs } from "@/lib/contexts/chat-tabs-context";
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: "/live",          label: "Chats",         icon: MessageSquare },
   { href: "/overview",      label: "Overview",       icon: LayoutDashboard },
   { href: "/my-issues",     label: "My Issues",      icon: CircleUser },
+  { href: "/escalations",   label: "Escalations",    icon: AlertTriangle },
   { href: "/analytics",     label: "Analytics",      icon: BarChart2 },
   { href: "/segments",      label: "Segments",       icon: Filter },
   { href: "/notifications", label: "Notifications",  icon: Bell },

@@ -14,7 +14,7 @@ export const GET = withTiming("GET /api/tags", async (request: NextRequest) => {
 
   const tags = await prisma.tagDefinition.findMany({
     orderBy: { name: "asc" },
-    select: { id: true, name: true, color: true, createdAt: true },
+    select: { id: true, name: true, color: true, categories: true, createdAt: true },
   });
 
   return NextResponse.json(tags);

@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
 
   const uid = session.userId;
   const safeCategory = (VALID_CATEGORIES.has(category ?? "") ? category! : "GENERAL") as Category;
+  const safeCategories = [safeCategory];
   const sanitizedName = typeof name === "string" ? name.slice(0, 128) : null;
 
   const user = await prisma.endUser.upsert({
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
   const conversation = await prisma.conversation.create({
     data: {
       userId: user.id,
-      category: safeCategory,
+      categories: safeCategories,
       status: "OPEN",
       ...(hasCapacity ? {} : { queuedAt: new Date() }),
     },
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
       .then((agents) => {
         const agentIds = agents.map((a) => a.id);
         const title = "New conversation started";
-        const body = `${sanitizedName ?? "A user"} started a new ${safeCategory.toLowerCase()} conversation.`;
+        const body = `${sanitizedName ?? "A user"} started a new ${safeCategories.map((c) => c.toLowerCase()).join(", ")} conversation.`;
         return createNotifications({
           agentIds,
           type: "NEW_CONVERSATION",

@@ -209,7 +209,7 @@ async function main() {
     const conv = await prisma.conversation.create({
       data: {
         userId: user.id,
-        category: c.category as never,
+        categories: [c.category as never],
         status: c.status as never,
         priority: c.priority as never,
         isAiPaused: c.isAiPaused,

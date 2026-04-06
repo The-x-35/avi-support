@@ -72,7 +72,7 @@ export async function RecentConversations() {
                 </div>
                 <div className="flex flex-col items-end gap-1.5 shrink-0">
                   <div className="flex items-center gap-1.5">
-                    <Badge variant="muted" size="sm">{categoryLabel(conv.category)}</Badge>
+                    {conv.categories.map((c) => <Badge key={c} variant="muted" size="sm">{categoryLabel(c)}</Badge>)}
                     <StatusBadge status={conv.status} />
                   </div>
                   {conv.lastMessageAt && (

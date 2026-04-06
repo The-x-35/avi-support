@@ -37,7 +37,12 @@ export const POST = withTiming("POST /api/conversations/[id]/tags", async (
 
   const { id } = await params;
   const numId = parseInt(id);
-  const { definitionId, name, color } = await request.json();
+  const { definitionId, name, color, categories } = await request.json();
+
+  const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
+  const safeCategories = Array.isArray(categories)
+    ? (categories as string[]).filter((c) => VALID_CATEGORIES.has(c)) as import("@prisma/client").Category[]
+    : [];
 
   let defId: string;
 
@@ -48,8 +53,8 @@ export const POST = withTiming("POST /api/conversations/[id]/tags", async (
     const trimmed = name.trim().slice(0, 64);
     const def = await prisma.tagDefinition.upsert({
       where: { name: trimmed },
-      create: { name: trimmed, color: typeof color === "string" ? color.slice(0, 32) : null },
-      update: {},
+      create: { name: trimmed, color: typeof color === "string" ? color.slice(0, 32) : null, categories: safeCategories },
+      update: safeCategories.length > 0 ? { categories: safeCategories } : {},
     });
     defId = def.id;
   } else {

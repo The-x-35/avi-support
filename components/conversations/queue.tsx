@@ -11,7 +11,7 @@ import { Clock, Pause, AlertTriangle } from "lucide-react";
 interface ConversationItem {
   id: string;
   status: string;
-  category: string;
+  categories: string[];
   priority: string;
   isAiPaused: boolean;
   lastMessageAt: string | null;
@@ -139,9 +139,9 @@ export function Queue() {
                         {conv.user.name ?? conv.user.email ?? "User"}
                       </Link>
                       <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
-                      <Badge variant="muted" size="sm">
-                        {categoryLabel(conv.category)}
-                      </Badge>
+                      {conv.categories.map((c) => (
+                        <Badge key={c} variant="muted" size="sm">{categoryLabel(c)}</Badge>
+                      ))}
                       <PriorityBadge priority={conv.priority} />
                       {issueTag && (
                         <Badge variant="info" size="sm">

@@ -23,7 +23,7 @@ export const GET = withTiming("GET /api/conversations", async (request: NextRequ
 
   const filters = {
     status: (searchParams.get("status") ?? undefined) as ConversationFilters["status"],
-    category: (searchParams.get("category") ?? undefined) as ConversationFilters["category"],
+    category: (searchParams.get("category") ?? undefined) as ConversationFilters["category"], // filters by hasSome
     priority: (searchParams.get("priority") ?? undefined) as ConversationFilters["priority"],
     isAiPaused: searchParams.has("isAiPaused")
       ? searchParams.get("isAiPaused") === "true"
@@ -61,7 +61,11 @@ export const POST = withTiming("POST /api/conversations", async (request: NextRe
 
   const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : null;
   const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
-  const category = typeof body.category === "string" && VALID_CATEGORIES.has(body.category) ? body.category : null;
+  const categories = Array.isArray(body.categories)
+    ? (body.categories as string[]).filter((c) => VALID_CATEGORIES.has(c))
+    : typeof body.category === "string" && VALID_CATEGORIES.has(body.category)
+      ? [body.category]
+      : [];
 
   // Find existing end-user by email, or create one
   let endUser = await prisma.endUser.findFirst({ where: { email } });
@@ -81,7 +85,7 @@ export const POST = withTiming("POST /api/conversations", async (request: NextRe
     data: {
       userId: endUser.id,
       assignedAgentId: auth.payload.agentId,
-      ...(category ? { category: category as "CARDS" | "ACCOUNT" | "SPENDS" | "KYC" | "GENERAL" | "OTHER" } : {}),
+      categories: categories as ("CARDS" | "ACCOUNT" | "SPENDS" | "KYC" | "GENERAL" | "OTHER")[],
       isAiPaused: true,
       lastMessageAt: new Date(),
     },

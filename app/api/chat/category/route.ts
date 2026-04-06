@@ -23,7 +23,7 @@ export const POST = withTiming("POST /api/chat/category", async (req: NextReques
 
   await prisma.conversation.update({
     where: { id: numId },
-    data: { category },
+    data: { categories: [category] },
   });
 
   return NextResponse.json({ success: true, category });

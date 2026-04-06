@@ -33,7 +33,7 @@ function buildClause(
     case "status":
       return buildEnumClause("status", operator, value);
     case "category":
-      return buildEnumClause("category", operator, value);
+      return { categories: { hasSome: (Array.isArray(value) ? value : [value]) as import("@prisma/client").Category[] } };
     case "priority":
       return buildEnumClause("priority", operator, value);
     case "isAiPaused":
@@ -138,7 +138,7 @@ export async function exportSegmentCsv(segmentId: string): Promise<string> {
         c.id,
         `"${c.user.name ?? ""}"`,
         `"${c.user.email ?? ""}"`,
-        c.category,
+        `"${c.categories.join("; ")}"`,
         c.status,
         c.priority,
         c.isAiPaused,

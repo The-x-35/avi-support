@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Bot } from "lucide-react";
 
 export function AIToggle({ initialEnabled }: { initialEnabled: boolean; isAdmin: boolean }) {
   const [enabled, setEnabled] = useState(initialEnabled);
@@ -26,36 +25,20 @@ export function AIToggle({ initialEnabled }: { initialEnabled: boolean; isAdmin:
   }
 
   return (
-    <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-      <div className="px-5 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-gray-500" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">AI Responses</h3>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {enabled
-                ? "AI is handling new conversations automatically"
-                : "AI is off — agents reply manually, users are informed"}
-            </p>
-          </div>
-        </div>
-        <button
-          onClick={toggle}
-          disabled={saving}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-            enabled ? "bg-gray-900" : "bg-gray-200"
-          }`}
-          aria-label={enabled ? "Disable AI" : "Enable AI"}
-        >
-          <span
-            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-              enabled ? "translate-x-[18px]" : "translate-x-[2px]"
-            }`}
-          />
-        </button>
+    <div className="flex items-center justify-between py-4 border-b border-gray-50 last:border-0">
+      <div>
+        <p className="text-sm font-medium text-gray-900">AI Responses</p>
+        <p className="text-xs text-gray-400 mt-0.5">
+          {enabled ? "AI handles new conversations automatically" : "Agents reply manually"}
+        </p>
       </div>
+      <button
+        onClick={toggle}
+        disabled={saving}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${enabled ? "bg-gray-900" : "bg-gray-200"}`}
+      >
+        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
+      </button>
     </div>
   );
 }

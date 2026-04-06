@@ -44,7 +44,13 @@
       "Bash(psql \"$NEON_URL\" -c \":*)",
       "Bash(psql \"$SUPABASE_URL\" -c \":*)",
       "Bash(__NEW_LINE_2dfcf1c18f399a80__ psql:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(psql postgresql://postgres.fcuehzobbdqdwltsyxmc:Seqfoh-2vapri-fipheg@aws-1-ap-south-1.pooler.supabase.com:5432/postgres -c 'UPDATE \"Conversation\" SET categories = ARRAY[category]::\"Category\"[]')",
+      "Bash(psql postgresql://postgres.fcuehzobbdqdwltsyxmc:Seqfoh-2vapri-fipheg@aws-1-ap-south-1.pooler.supabase.com:5432/postgres -c 'SELECT categories[1], COUNT\\(*\\) FROM \"Conversation\" GROUP BY 1')",
+      "Bash(mkdir -p /Users/arpitsingh/Projects/dashboard/app/api/conversations/\\\\[id\\\\]/escalations/\\\\[eid\\\\])",
+      "Bash(mkdir -p /Users/arpitsingh/Projects/dashboard/app/api/teams/\\\\[id\\\\]/members)",
+      "Bash(npm run:*)",
+      "Bash(curl -sv http://localhost:3000/api/teams)"
     ]
   }
 }

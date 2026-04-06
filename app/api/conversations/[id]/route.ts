@@ -51,7 +51,9 @@ export const PATCH = withTiming("PATCH /api/conversations/[id]", async (
   const data: Record<string, unknown> = {};
   if (body.status && VALID_STATUSES.has(body.status)) data.status = body.status;
   if (body.priority && VALID_PRIORITIES.has(body.priority)) data.priority = body.priority;
-  if (body.category && VALID_CATEGORIES.has(body.category)) data.category = body.category;
+  if (Array.isArray(body.categories) && body.categories.length > 0 && body.categories.every((c: unknown) => VALID_CATEGORIES.has(c as string))) {
+    data.categories = body.categories;
+  }
   if (body.assignedAgentId !== undefined) data.assignedAgentId = body.assignedAgentId ?? null;
 
   if (Object.keys(data).length === 0) {

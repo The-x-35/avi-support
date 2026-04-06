@@ -14,6 +14,7 @@ import {
   Bell,
   ChevronDown,
   CircleUser,
+  AlertTriangle,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { useNotifications } from "@/components/notifications/notification-context";
@@ -23,6 +24,7 @@ const nav = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/live", label: "Live Feed", icon: Radio },
   { href: "/my-issues", label: "My Issues", icon: CircleUser },
+  { href: "/escalations", label: "Escalations", icon: AlertTriangle },
   { href: "/analytics", label: "Analytics", icon: BarChart2 },
   { href: "/segments", label: "Segments", icon: Filter },
   { href: "/notifications", label: "Notifications", icon: Bell },

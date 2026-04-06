@@ -48,8 +48,8 @@ export class OpenAIProvider implements AIProvider {
   ): AsyncIterable<string> {
     const systemMessage = [
       SYSTEM_PROMPT,
-      context.category !== "GENERAL"
-        ? `\nThis conversation is in the ${context.category} category.`
+      context.categories.length > 0 && !(context.categories.length === 1 && context.categories[0] === "GENERAL")
+        ? `\nThis conversation is categorised as: ${context.categories.join(", ")}.`
         : "",
       context.userProfile?.name
         ? `\nUser: ${context.userProfile.name}`
@@ -102,7 +102,7 @@ export class OpenAIProvider implements AIProvider {
             { role: "system", content: CLASSIFICATION_PROMPT },
             {
               role: "user",
-              content: `Category: ${context.category}\n\nTranscript:\n${transcript}`,
+              content: `Categories: ${context.categories.join(", ")}\n\nTranscript:\n${transcript}`,
             },
           ],
           response_format: { type: "json_object" },

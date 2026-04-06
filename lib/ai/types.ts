@@ -1,6 +1,6 @@
 export interface ConversationContext {
   conversationId: string;
-  category: string;
+  categories: string[];
   userProfile?: {
     name?: string;
     email?: string;

@@ -16,7 +16,7 @@ interface UserProfileProps {
     conversations: Array<{
       id: number;
       status: string;
-      category: string;
+      categories: string[];
       priority: string;
       isAiPaused: boolean;
       lastMessageAt: Date | null;
@@ -107,9 +107,9 @@ export function UserProfile({ user }: UserProfileProps) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded shrink-0">#{conv.id}</span>
-                          <Badge variant="muted" size="sm">
-                            {categoryLabel(conv.category)}
-                          </Badge>
+                          {conv.categories.map((c) => (
+                            <Badge key={c} variant="muted" size="sm">{categoryLabel(c)}</Badge>
+                          ))}
                           <PriorityBadge priority={conv.priority} />
                           {conv.tags.slice(0, 2).map((t: UserConversationTag) => (
                             <Badge key={t.definition.name} variant="default" size="sm">

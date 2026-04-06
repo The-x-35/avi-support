@@ -41,7 +41,7 @@ type ServerEvent =
   | { type: "read_receipt"; payload: { conversationId: string; readAt: string } }
   | { type: "control"; payload: ControlPayload }
   | { type: "tag_update"; payload: { conversationId: string; tags: unknown[] } }
-  | { type: "category_update"; payload: { conversationId: string; category: string } }
+  | { type: "category_update"; payload: { conversationId: string; categories: string[] } }
   | { type: "notification"; payload: NotificationPayload }
   | { type: "error"; payload: { code: string; message: string } }
   | { type: "ack"; payload: { ref: string } };
@@ -282,7 +282,7 @@ async function handleAiResponse(conversationId: string) {
 
     const context: ConversationContext = {
       conversationId,
-      category: conversation.category,
+      categories: conversation.categories,
       userProfile: {
         name: conversation.user.name ?? undefined,
         email: conversation.user.email ?? undefined,
@@ -360,7 +360,7 @@ async function classifyAndTag(
     const ai = getAIProvider();
     const tags = await ai.classifyConversation({
       conversationId,
-      category: conversation.category,
+      categories: conversation.categories,
       messages,
     });
 
@@ -408,22 +408,23 @@ async function classifyAndTag(
 
 // ─── Auto Category Updater ───────────────────────────────────────────────────
 
-async function autoUpdateCategory(conversationId: string, messageText: string, currentCategory: string) {
+async function autoUpdateCategory(conversationId: string, messageText: string, currentCategories: string[]) {
   try {
     const numId = parseInt(conversationId);
     const guess = guessCategory(messageText);
     if (!guess) return;
-    // Only update if detected category differs and confidence is high
-    if (guess.category === currentCategory || guess.confidence < 0.75) return;
+    // Only add if not already in the list and confidence is high
+    if (currentCategories.includes(guess.category) || guess.confidence < 0.75) return;
 
-    await prisma.conversation.update({
+    const updated = await prisma.conversation.update({
       where: { id: numId },
-      data: { category: guess.category },
+      data: { categories: { push: guess.category as "CARDS" | "ACCOUNT" | "SPENDS" | "KYC" | "GENERAL" | "OTHER" } },
+      select: { categories: true },
     });
 
     broadcast(conversationId, {
       type: "category_update",
-      payload: { conversationId, category: guess.category },
+      payload: { conversationId, categories: updated.categories },
     });
   } catch (err) {
     console.error("[ws] Auto category error:", err);
@@ -634,7 +635,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
       // Auto-detect category from user message (fire-and-forget)
       if (senderType === "USER") {
-        autoUpdateCategory(conversationId, content, conversation.category);
+        autoUpdateCategory(conversationId, content, conversation.categories);
       }
 
       // Notify agents of new user message (skip private agent messages)

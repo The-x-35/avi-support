@@ -169,7 +169,7 @@ async function main() {
     const conversation = await prisma.conversation.create({
       data: {
         userId: user.id,
-        category: template.category,
+        categories: [template.category],
         status: template.status,
         priority: template.status === "ESCALATED" ? "HIGH" : "MEDIUM",
         isAiPaused: template.status === "ESCALATED",
@@ -207,7 +207,7 @@ async function main() {
     const conversation = await prisma.conversation.create({
       data: {
         userId: user.id,
-        category: template.category,
+        categories: [template.category],
         status: statuses[i % statuses.length],
         priority: ["LOW", "MEDIUM", "MEDIUM", "HIGH", "CRITICAL"][i % 5] as any,
         isAiPaused: i % 4 === 0,

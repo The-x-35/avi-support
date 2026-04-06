@@ -29,7 +29,7 @@ export const GET = withTiming("GET /api/chat/history", async (request: NextReque
     take: 20,
     select: {
       id: true,
-      category: true,
+      categories: true,
       status: true,
       createdAt: true,
       lastMessageAt: true,

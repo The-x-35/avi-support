@@ -387,7 +387,7 @@ export function UserChat({
         });
         setConvStatus(data.status ?? "OPEN");
         setIsAgentActive(!!(data.isAiPaused && data.assignedAgentId));
-        if (!initialCategory) setConvCategory(data.category ?? "GENERAL");
+        if (!initialCategory) setConvCategory(data.categories?.[0] ?? "GENERAL");
       })
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -478,7 +478,7 @@ export function UserChat({
         case "category_update": {
           const p = evt.payload;
           if (p.conversationId !== conversationId) return;
-          setConvCategory(p.category);
+          if (p.categories.length > 0) setConvCategory(p.categories[0]);
           break;
         }
       }

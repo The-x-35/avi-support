@@ -15,7 +15,7 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:3001";
 interface ConversationItem {
   id: number;
   status: string;
-  category: string;
+  categories: string[];
   priority: string;
   isAiPaused: boolean;
   lastMessageAt: string | null;
@@ -358,7 +358,7 @@ export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds =
                   {/* Right: badges + time + actions */}
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <div className="flex items-center gap-1.5">
-                      <Badge variant="muted" size="sm">{categoryLabel(conv.category)}</Badge>
+                      {conv.categories.map((c) => <Badge key={c} variant="muted" size="sm">{categoryLabel(c)}</Badge>)}
                       <PriorityBadge priority={conv.priority} />
                       <StatusBadge status={conv.status} />
                     </div>

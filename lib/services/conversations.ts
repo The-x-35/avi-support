@@ -79,7 +79,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     where.status = Array.isArray(status) ? { in: status } : status;
   }
   if (category) {
-    where.category = Array.isArray(category) ? { in: category } : category;
+    where.categories = { hasSome: Array.isArray(category) ? category : [category] };
   }
   if (priority) {
     where.priority = Array.isArray(priority) ? { in: priority } : priority;
@@ -124,7 +124,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
     prisma.conversation.findMany({
       where,
       select: {
-        id: true, userId: true, category: true, status: true,
+        id: true, userId: true, categories: true, status: true,
         isAiPaused: true, assignedAgentId: true, priority: true,
         subject: true, queuedAt: true, lastMessageAt: true,
         lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,
@@ -229,7 +229,7 @@ export async function getConversationById(id: number) {
     prisma.conversation.findUnique({
       where: { id },
       select: {
-        id: true, userId: true, category: true, status: true,
+        id: true, userId: true, categories: true, status: true,
         isAiPaused: true, assignedAgentId: true, priority: true,
         subject: true, queuedAt: true, lastMessageAt: true,
         lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,

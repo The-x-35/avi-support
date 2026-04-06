@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw, Pencil, Trash2, Calendar, AlertTriangle } from "lucide-react";
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
@@ -74,6 +74,7 @@ interface TagDefinition {
   id: string;
   name: string;
   color: string | null;
+  categories: string[];
 }
 
 interface Tag {
@@ -84,7 +85,7 @@ interface Tag {
 interface Conversation {
   id: number;
   status: string;
-  category: string;
+  categories: string[];
   priority: string;
   isAiPaused: boolean;
   assignedAgentId: string | null;
@@ -107,7 +108,7 @@ interface Conversation {
 interface ConvSummary {
   id: number;
   status: string;
-  category: string;
+  categories: string[];
   lastMessageAt: string | null;
   user: { id: string; name: string | null; email: string | null; avatarUrl: string | null; externalId: string };
   messages: Array<{ content: string; senderType: string }>;
@@ -115,7 +116,7 @@ interface ConvSummary {
 
 interface UserHistoryItem {
   id: number;
-  category: string;
+  categories: string[];
   status: string;
   lastMessageAt: string | null;
   messages: Array<{ content: string; senderType: string }>;
@@ -123,7 +124,7 @@ interface UserHistoryItem {
 
 interface HistoryDetail {
   id: number;
-  category: string;
+  categories: string[];
   status: string;
   createdAt: string;
   messages: Array<{
@@ -144,6 +145,19 @@ interface Agent {
 const STATUS_OPTIONS = ["OPEN", "PENDING", "ESCALATED", "RESOLVED", "CLOSED"];
 const PRIORITY_OPTIONS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const CATEGORY_OPTIONS = ["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"];
+const ESC_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "OPEN", label: "Open" },
+  { value: "IN_PROGRESS", label: "In Progress" },
+  { value: "RESOLVED", label: "Resolved" },
+  { value: "CLOSED", label: "Closed" },
+];
+const ESC_STATUS_COLORS: Record<string, string> = {
+  OPEN: "bg-amber-50 text-amber-700",
+  IN_PROGRESS: "bg-blue-50 text-blue-700",
+  RESOLVED: "bg-green-50 text-green-700",
+  CLOSED: "bg-gray-100 text-gray-500",
+};
+const EMPTY_ESC_FORM = { title: "", teamId: "", categories: [] as string[], tagIds: [] as string[], notes: "", dueDate: "", status: "OPEN" };
 
 interface ConversationViewProps {
   conversation: Conversation;
@@ -184,6 +198,26 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [tagSearch, setTagSearch] = useState("");
   const [tagSaving, setTagSaving] = useState(false);
   const [allTagDefs, setAllTagDefs] = useState<TagDefinition[]>([]);
+  const [newTagName, setNewTagName] = useState<string | null>(null);
+  const [newTagCategories, setNewTagCategories] = useState<string[]>([]);
+
+  // Right panel tabs
+  const [rightTab, setRightTab] = useState<"general" | "escalations">("general");
+
+  // Escalations
+  type EscalationItem = {
+    id: string; title: string; teamId: string | null; categories: string[]; tagIds: string[];
+    notes: string | null; dueDate: string | null; status: string;
+    team: { id: string; name: string } | null;
+  };
+  const [escalations, setEscalations] = useState<EscalationItem[]>([]);
+  const [escalationsLoading, setEscalationsLoading] = useState(false);
+  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
+  type EscForm = { title: string; teamId: string; categories: string[]; tagIds: string[]; notes: string; dueDate: string; status: string };
+  const [escForm, setEscForm] = useState<EscForm>(EMPTY_ESC_FORM);
+  const [escFormOpen, setEscFormOpen] = useState(false);
+  const [escEditId, setEscEditId] = useState<string | null>(null);
+  const [escSaving, setEscSaving] = useState(false);
 
   // Workspace setting
   const [aiEnabled, setAiEnabled] = useState(true);
@@ -296,6 +330,23 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   useEffect(() => {
     fetchSuggestions();
   }, [conv.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch escalations + teams when escalations tab is opened
+  useEffect(() => {
+    if (rightTab !== "escalations") return;
+    setEscalationsLoading(true);
+    Promise.all([
+      fetch(`/api/conversations/${conv.id}/escalations`).then((r) => r.json()),
+      fetch("/api/teams").then((r) => r.json()),
+    ]).then(([escs, tms]) => {
+      setEscalations(Array.isArray(escs) ? escs : []);
+      setTeams(Array.isArray(tms) ? tms.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })) : []);
+    }).catch(() => {}).finally(() => setEscalationsLoading(false));
+    // Also ensure tag defs are loaded for escalation tag picker
+    if (allTagDefs.length === 0) {
+      fetch("/api/tags").then((r) => r.json()).then((d) => setAllTagDefs(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+  }, [rightTab, conv.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch sidebar conversations
   useEffect(() => {
@@ -651,14 +702,55 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }
 
-  async function createAndAddTag(name: string) {
+  async function saveEscalation() {
+    if (escSaving || !escForm.title.trim()) return;
+    setEscSaving(true);
+    try {
+      const payload = {
+        title: escForm.title.trim(),
+        teamId: escForm.teamId || null,
+        categories: escForm.categories,
+        tagIds: escForm.tagIds,
+        notes: escForm.notes || null,
+        dueDate: escForm.dueDate || null,
+        status: escForm.status,
+      };
+      let updated: EscalationItem;
+      if (escEditId) {
+        const r = await fetch(`/api/conversations/${conv.id}/escalations/${escEditId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        updated = await r.json();
+        setEscalations((prev) => prev.map((e) => e.id === escEditId ? updated : e));
+      } else {
+        const r = await fetch(`/api/conversations/${conv.id}/escalations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        updated = await r.json();
+        setEscalations((prev) => [updated, ...prev]);
+      }
+      setEscFormOpen(false);
+      setEscEditId(null);
+      setEscForm(EMPTY_ESC_FORM);
+    } finally {
+      setEscSaving(false);
+    }
+  }
+
+  async function deleteEscalation(id: string) {
+    await fetch(`/api/conversations/${conv.id}/escalations/${id}`, { method: "DELETE" });
+    setEscalations((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  function startCreateTag(name: string) {
+    setNewTagName(name.trim());
+    setNewTagCategories(conv.categories.length > 0 ? [...conv.categories] : []);
+  }
+
+  async function createAndAddTag(name: string, categories: string[]) {
     if (tagSaving || !name.trim()) return;
     setTagSaving(true);
     try {
       const res = await fetch(`/api/conversations/${conv.id}/tags`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({ name: name.trim(), categories }),
       });
       if (res.ok) {
         const tag = await res.json();
@@ -672,6 +764,8 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       setTagSaving(false);
       setTagPickerOpen(false);
       setTagSearch("");
+      setNewTagName(null);
+      setNewTagCategories([]);
     }
   }
 
@@ -966,9 +1060,9 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 {conv.user.name ?? conv.user.email ?? conv.user.externalId}
               </span>
               <span className="text-[10px] font-medium text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">#{conv.id}</span>
-              <Badge variant="muted" size="sm">
-                {categoryLabel(conv.category)}
-              </Badge>
+              {conv.categories.map((c) => (
+                <Badge key={c} variant="muted" size="sm">{categoryLabel(c)}</Badge>
+              ))}
               {conv.isAiPaused && aiEnabled && (
                 <Badge variant="warning" size="sm">
                   AI paused
@@ -1297,7 +1391,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
       {/* Right panel — context */}
       <div
-        className="w-72 shrink-0 flex flex-col overflow-y-auto relative"
+        className="w-72 shrink-0 flex flex-col relative"
         style={{
           background: "rgba(255,255,255,0.88)",
           backdropFilter: "blur(16px)",
@@ -1305,6 +1399,31 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           borderLeft: "1px solid rgba(0,0,0,0.05)",
         }}
       >
+        {/* Tab switcher */}
+        <div className="flex shrink-0 border-b border-gray-100">
+          {(["general", "escalations"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setRightTab(tab)}
+              className={`flex-1 py-2.5 text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+                rightTab === tab
+                  ? "text-gray-900 border-b-2 border-gray-900 -mb-px"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              {tab === "general" ? "General" : "Escalations"}
+              {tab === "escalations" && escalations.length > 0 && (
+                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-100 text-gray-500 text-[9px]">
+                  {escalations.length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── General tab ── */}
+        {rightTab === "general" && (
+          <div className="flex-1 overflow-y-auto">
         {/* User info */}
         <div className="p-5 border-b border-gray-100">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">User</h3>
@@ -1322,6 +1441,23 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               )}
             </div>
           </Link>
+        </div>
+
+        {/* App Info — mock data */}
+        <div className="p-5 border-b border-gray-100 space-y-2">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">App Info</h3>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-gray-400">App version</span>
+            <span className="text-[11px] font-medium text-gray-700">2.4.1</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-gray-400">90-day volume</span>
+            <span className="text-[11px] font-medium text-gray-700">24 conversations</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-gray-400">Login method</span>
+            <span className="text-[11px] font-medium text-gray-700">Google OAuth</span>
+          </div>
         </div>
 
         {/* AI Suggested Replies */}
@@ -1420,22 +1556,43 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             ))}
           </EditableField>
 
-          {/* Category */}
+          {/* Category — multi-select */}
           <EditableField
             label="Category"
             open={editOpen === "category"}
             onToggle={() => setEditOpen(editOpen === "category" ? null : "category")}
-            display={<Badge variant="muted">{categoryLabel(conv.category)}</Badge>}
+            display={
+              <div className="flex flex-wrap gap-1">
+                {conv.categories.length > 0
+                  ? conv.categories.map((c) => <Badge key={c} variant="muted">{categoryLabel(c)}</Badge>)
+                  : <Badge variant="muted">None</Badge>}
+              </div>
+            }
           >
-            {CATEGORY_OPTIONS.map((c) => (
-              <DropdownOption
-                key={c}
-                active={c === conv.category}
-                onClick={() => { patchConv({ category: c }); setEditOpen(null); }}
-              >
-                <span className="text-xs text-gray-700">{categoryLabel(c)}</span>
-              </DropdownOption>
-            ))}
+            {CATEGORY_OPTIONS.map((c) => {
+              const selected = conv.categories.includes(c);
+              return (
+                <DropdownOption
+                  key={c}
+                  active={selected}
+                  onClick={() => {
+                    const next = selected
+                      ? conv.categories.filter((x) => x !== c)
+                      : [...conv.categories, c];
+                    if (next.length === 0) return; // require at least one
+                    patchConv({ categories: next });
+                    setConv((prev) => ({ ...prev, categories: next }));
+                  }}
+                >
+                  <span className="flex items-center gap-2 text-xs text-gray-700">
+                    <span className={`w-3 h-3 rounded border flex items-center justify-center shrink-0 ${selected ? "bg-gray-700 border-gray-700" : "border-gray-300"}`}>
+                      {selected && <Check className="w-2 h-2 text-white" />}
+                    </span>
+                    {categoryLabel(c)}
+                  </span>
+                </DropdownOption>
+              );
+            })}
           </EditableField>
 
           {/* Assigned agent */}
@@ -1524,68 +1681,119 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           {/* Tag picker dropdown */}
           {tagPickerOpen && (
             <div className="mt-2 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
-              <div className="px-3 py-2 border-b border-gray-100">
-                <input
-                  autoFocus
-                  placeholder="Search or create tag…"
-                  value={tagSearch}
-                  onChange={(e) => setTagSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") { setTagPickerOpen(false); setTagSearch(""); }
-                    if (e.key === "Enter") {
-                      const q = tagSearch.trim();
-                      if (!q) return;
-                      const exact = allTagDefs.find((d) => d.name.toLowerCase() === q.toLowerCase());
-                      if (exact) addTag(exact.id);
-                      else createAndAddTag(q);
-                    }
-                  }}
-                  className="w-full text-xs outline-none placeholder:text-gray-300 bg-transparent"
-                />
-              </div>
-              <div className="max-h-48 overflow-y-auto py-1">
-                {allTagDefs
-                  .filter((d) => !tagSearch || d.name.toLowerCase().includes(tagSearch.toLowerCase()))
-                  .map((def) => {
-                    const already = conv.tags.some((t) => t.definition.id === def.id);
-                    return (
-                      <button
-                        key={def.id}
-                        onClick={() => addTag(def.id)}
-                        disabled={already}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default transition-colors"
-                      >
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: def.color ?? "#d1d5db" }}
-                        />
-                        {def.name}
-                        {already && <span className="ml-auto text-gray-300">added</span>}
-                      </button>
-                    );
-                  })}
-                {tagSearch.trim() && !allTagDefs.some((d) => d.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+              {newTagName !== null ? (
+                /* ── Create-tag step: pick categories ── */
+                <div className="p-3">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <button onClick={() => setNewTagName(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-xs font-medium text-gray-700 truncate">New tag: &ldquo;{newTagName}&rdquo;</span>
+                  </div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Link to categories</p>
+                  <div className="flex flex-wrap gap-1.5 mb-3">
+                    {CATEGORY_OPTIONS.map((c) => {
+                      const on = newTagCategories.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          onClick={() => setNewTagCategories((prev) => on ? prev.filter((x) => x !== c) : [...prev, c])}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${on ? "bg-gray-800 border-gray-800 text-white" : "border-gray-200 text-gray-500 hover:border-gray-400"}`}
+                        >
+                          {on && <Check className="w-2.5 h-2.5" />}
+                          {categoryLabel(c)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mb-2.5">Leave unselected to show for all categories.</p>
                   <button
-                    onClick={() => createAndAddTag(tagSearch)}
+                    onClick={() => createAndAddTag(newTagName, newTagCategories)}
                     disabled={tagSaving}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 text-gray-500 transition-colors"
+                    className="w-full py-1.5 rounded-lg bg-gray-800 text-white text-xs font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors"
                   >
-                    <Plus className="w-3 h-3 shrink-0" />
-                    Create &ldquo;{tagSearch.trim()}&rdquo;
+                    {tagSaving ? "Creating…" : "Create tag"}
                   </button>
-                )}
-                {allTagDefs.length === 0 && !tagSearch && (
-                  <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>
-                )}
-              </div>
-              <div className="px-3 py-1.5 border-t border-gray-100">
-                <button
-                  onClick={() => { setTagPickerOpen(false); setTagSearch(""); }}
-                  className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  Close
-                </button>
-              </div>
+                </div>
+              ) : (
+                /* ── Search / list step ── */
+                <>
+                  <div className="px-3 py-2 border-b border-gray-100">
+                    <input
+                      autoFocus
+                      placeholder="Search or create tag…"
+                      value={tagSearch}
+                      onChange={(e) => setTagSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") { setTagPickerOpen(false); setTagSearch(""); }
+                        if (e.key === "Enter") {
+                          const q = tagSearch.trim();
+                          if (!q) return;
+                          const exact = allTagDefs.find((d) => d.name.toLowerCase() === q.toLowerCase());
+                          if (exact) addTag(exact.id);
+                          else startCreateTag(q);
+                        }
+                      }}
+                      className="w-full text-xs outline-none placeholder:text-gray-300 bg-transparent"
+                    />
+                  </div>
+                  <div className="max-h-48 overflow-y-auto py-1">
+                    {(() => {
+                      const q = tagSearch.toLowerCase();
+                      const filtered = allTagDefs.filter((d) => !q || d.name.toLowerCase().includes(q));
+                      const suggested = filtered.filter((d) => d.categories.length > 0 && d.categories.some((c) => conv.categories.includes(c)));
+                      const other = filtered.filter((d) => !suggested.includes(d));
+                      const renderTag = (def: TagDefinition) => {
+                        const already = conv.tags.some((t) => t.definition.id === def.id);
+                        return (
+                          <button
+                            key={def.id}
+                            onClick={() => addTag(def.id)}
+                            disabled={already}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 disabled:opacity-40 disabled:cursor-default transition-colors"
+                          >
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: def.color ?? "#d1d5db" }} />
+                            {def.name}
+                            {already && <span className="ml-auto text-gray-300">added</span>}
+                          </button>
+                        );
+                      };
+                      return (
+                        <>
+                          {suggested.length > 0 && (
+                            <>
+                              <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Suggested</p>
+                              {suggested.map(renderTag)}
+                              {other.length > 0 && <div className="mx-3 my-1 border-t border-gray-100" />}
+                            </>
+                          )}
+                          {other.map(renderTag)}
+                        </>
+                      );
+                    })()}
+                    {tagSearch.trim() && !allTagDefs.some((d) => d.name.toLowerCase() === tagSearch.trim().toLowerCase()) && (
+                      <button
+                        onClick={() => startCreateTag(tagSearch)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-50 text-gray-500 transition-colors"
+                      >
+                        <Plus className="w-3 h-3 shrink-0" />
+                        Create &ldquo;{tagSearch.trim()}&rdquo;
+                      </button>
+                    )}
+                    {allTagDefs.length === 0 && !tagSearch && (
+                      <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>
+                    )}
+                  </div>
+                  <div className="px-3 py-1.5 border-t border-gray-100">
+                    <button
+                      onClick={() => { setTagPickerOpen(false); setTagSearch(""); setNewTagName(null); setNewTagCategories([]); }}
+                      className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1709,7 +1917,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                             </span>
                           )}
                           <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
-                            {categoryLabel(c.category)}
+                            {c.categories.map((cat) => categoryLabel(cat)).join(", ")}
                           </span>
                           <span className="text-[9px] font-medium text-gray-400 bg-gray-100 px-1 py-0.5 rounded">#{c.id}</span>
                         </div>
@@ -1740,7 +1948,255 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             </div>
           )}
         </div>
+          </div>
+        )}
 
+        {/* ── Escalations tab ── */}
+        {rightTab === "escalations" && (
+          <div className="flex-1 overflow-y-auto">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Escalations</h3>
+              <button
+                onClick={() => { setEscEditId(null); setEscForm(EMPTY_ESC_FORM); setEscFormOpen(true); }}
+                className="w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-700 transition-colors"
+                title="Add escalation"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+
+            {/* Inline create / edit form */}
+            {escFormOpen && (
+              <div className="p-5 border-b border-gray-100 bg-gray-50 space-y-3">
+                <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                  {escEditId ? "Edit escalation" : "New escalation"}
+                </p>
+
+                {/* Title */}
+                <input
+                  placeholder="Title *"
+                  value={escForm.title}
+                  onChange={(e) => setEscForm((f) => ({ ...f, title: e.target.value }))}
+                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 placeholder:text-gray-300 text-gray-800"
+                />
+
+                {/* Team */}
+                <select
+                  value={escForm.teamId}
+                  onChange={(e) => setEscForm((f) => ({ ...f, teamId: e.target.value }))}
+                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 text-gray-700 appearance-none"
+                >
+                  <option value="">No team</option>
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+
+                {/* Categories */}
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Categories</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CATEGORY_OPTIONS.map((c) => {
+                      const on = escForm.categories.includes(c);
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setEscForm((f) => ({ ...f, categories: on ? f.categories.filter((x) => x !== c) : [...f.categories, c] }))}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${on ? "bg-gray-800 border-gray-800 text-white" : "border-gray-200 text-gray-500 hover:border-gray-400"}`}
+                        >
+                          {on && <Check className="w-2.5 h-2.5" />}
+                          {categoryLabel(c)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Tags */}
+                {allTagDefs.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Tags</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {allTagDefs.map((d) => {
+                        const on = escForm.tagIds.includes(d.id);
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() => setEscForm((f) => ({ ...f, tagIds: on ? f.tagIds.filter((x) => x !== d.id) : [...f.tagIds, d.id] }))}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${on ? "text-white border-transparent" : "border-gray-200 text-gray-500 hover:border-gray-400"}`}
+                            style={on ? { backgroundColor: d.color ?? "#374151", borderColor: d.color ?? "#374151" } : {}}
+                          >
+                            {on && <Check className="w-2.5 h-2.5" />}
+                            {d.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Status */}
+                <select
+                  value={escForm.status}
+                  onChange={(e) => setEscForm((f) => ({ ...f, status: e.target.value }))}
+                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 text-gray-700 appearance-none"
+                >
+                  {ESC_STATUS_OPTIONS.map(({ value, label }) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+
+                {/* Due date */}
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Due date</p>
+                  <input
+                    type="date"
+                    value={escForm.dueDate}
+                    onChange={(e) => setEscForm((f) => ({ ...f, dueDate: e.target.value }))}
+                    className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 text-gray-700"
+                  />
+                </div>
+
+                {/* Notes */}
+                <textarea
+                  placeholder="Notes (optional)"
+                  value={escForm.notes}
+                  onChange={(e) => setEscForm((f) => ({ ...f, notes: e.target.value }))}
+                  rows={2}
+                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 placeholder:text-gray-300 resize-none text-gray-800"
+                />
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveEscalation}
+                    disabled={escSaving || !escForm.title.trim()}
+                    className="flex-1 py-1.5 rounded-lg bg-gray-900 text-white text-xs font-medium hover:bg-gray-700 disabled:opacity-40 transition-colors"
+                  >
+                    {escSaving ? "Saving…" : escEditId ? "Update" : "Create"}
+                  </button>
+                  <button
+                    onClick={() => { setEscFormOpen(false); setEscEditId(null); setEscForm(EMPTY_ESC_FORM); }}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-500 hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Escalation list */}
+            <div className="p-5 space-y-3">
+              {escalationsLoading && (
+                <div className="space-y-2">
+                  {[1, 2].map((i) => <div key={i} className="h-16 rounded-xl bg-gray-50 animate-pulse" />)}
+                </div>
+              )}
+
+              {!escalationsLoading && escalations.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-8 text-center">
+                  <AlertTriangle className="w-6 h-6 text-gray-200" />
+                  <p className="text-xs text-gray-400">No escalations yet</p>
+                  <button
+                    onClick={() => { setEscEditId(null); setEscForm(EMPTY_ESC_FORM); setEscFormOpen(true); }}
+                    className="text-[11px] text-gray-500 hover:text-gray-700 underline underline-offset-2 transition-colors"
+                  >
+                    Create one
+                  </button>
+                </div>
+              )}
+
+              {escalations.map((esc) => {
+                const statusOpt = ESC_STATUS_OPTIONS.find((o) => o.value === esc.status);
+                return (
+                  <div key={esc.id} className="bg-white border border-gray-100 rounded-xl p-3 space-y-1.5 shadow-sm">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs font-semibold text-gray-800 leading-snug flex-1">{esc.title}</p>
+                      <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${ESC_STATUS_COLORS[esc.status] ?? "bg-gray-100 text-gray-500"}`}>
+                        {statusOpt?.label ?? esc.status}
+                      </span>
+                    </div>
+
+                    {(esc.team || esc.dueDate) && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {esc.team && (
+                          <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                            <User className="w-2.5 h-2.5" />
+                            {esc.team.name}
+                          </span>
+                        )}
+                        {esc.dueDate && (
+                          <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                            <Calendar className="w-2.5 h-2.5" />
+                            {new Date(esc.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {esc.categories.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {esc.categories.map((c) => (
+                          <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">{categoryLabel(c)}</span>
+                        ))}
+                      </div>
+                    )}
+
+                    {esc.tagIds.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {esc.tagIds.map((tid) => {
+                          const def = allTagDefs.find((d) => d.id === tid);
+                          return def ? (
+                            <span
+                              key={tid}
+                              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                              style={def.color ? { backgroundColor: def.color + "22", color: def.color } : { backgroundColor: "#f3f4f6", color: "#6b7280" }}
+                            >
+                              {def.name}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+
+                    {esc.notes && (
+                      <p className="text-[11px] text-gray-500 leading-relaxed">{esc.notes}</p>
+                    )}
+
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button
+                        onClick={() => {
+                          setEscEditId(esc.id);
+                          setEscForm({
+                            title: esc.title,
+                            teamId: esc.teamId ?? "",
+                            categories: esc.categories,
+                            tagIds: esc.tagIds,
+                            notes: esc.notes ?? "",
+                            dueDate: esc.dueDate ? esc.dueDate.slice(0, 10) : "",
+                            status: esc.status,
+                          });
+                          setEscFormOpen(true);
+                        }}
+                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-700 transition-colors"
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => deleteEscalation(esc.id)}
+                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-2.5 h-2.5" />
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Past conversation overlay */}
         {(historyDetail || historyDetailLoading) && (
@@ -1748,7 +2204,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             {/* Overlay header */}
             <div className="h-12 flex items-center justify-between px-4 border-b border-gray-100 shrink-0">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                {historyDetail ? categoryLabel(historyDetail.category) : "Loading…"}
+                {historyDetail ? historyDetail.categories.map((c) => categoryLabel(c)).join(", ") : "Loading…"}
               </span>
               <div className="flex items-center gap-1">
                 {historyDetail && (

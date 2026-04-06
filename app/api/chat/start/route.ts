@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   const conversation = await prisma.conversation.create({
     data: {
       userId: user.id,
-      category: safeCategory,
+      categories: [safeCategory],
       status: "OPEN",
       ...(hasCapacity ? {} : { queuedAt: new Date() }),
     },

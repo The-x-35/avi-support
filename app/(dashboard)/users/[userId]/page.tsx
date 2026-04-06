@@ -13,9 +13,16 @@ export default async function UserPage({
     where: { id: userId },
     include: {
       conversations: {
-        include: {
-          tags: { include: { definition: true } },
-          messages: { orderBy: { createdAt: "desc" }, take: 1 },
+        select: {
+          id: true,
+          status: true,
+          categories: true,
+          priority: true,
+          isAiPaused: true,
+          lastMessageAt: true,
+          createdAt: true,
+          tags: { include: { definition: { select: { name: true, color: true } } } },
+          messages: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, content: true, senderType: true, createdAt: true } },
           _count: { select: { messages: true } },
         },
         orderBy: { lastMessageAt: "desc" },

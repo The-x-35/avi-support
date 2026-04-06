@@ -92,7 +92,7 @@ model EndUser {
 model Conversation {
   id              Int                @id @default(autoincrement())
   userId          String
-  categories      Category[]
+  categories      String[]
   status          ConversationStatus @default(OPEN)
   isAiPaused      Boolean            @default(false)
   assignedAgentId String?
@@ -162,11 +162,11 @@ model Message {
 }
 
 model TagDefinition {
-  id         String     @id @default(uuid())
-  name       String     @unique
+  id         String   @id @default(uuid())
+  name       String   @unique
   color      String?
-  categories Category[]
-  createdAt  DateTime   @default(now())
+  categories String[]
+  createdAt  DateTime @default(now())
   tags       Tag[]
 }
 
@@ -300,7 +300,7 @@ model Escalation {
   conversationId Int
   title          String
   teamId         String?
-  categories     Category[]
+  categories     String[]
   tagIds         String[]
   notes          String?
   dueDate        DateTime?

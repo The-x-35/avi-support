@@ -50,7 +50,13 @@
       "Bash(mkdir -p /Users/arpitsingh/Projects/dashboard/app/api/conversations/\\\\[id\\\\]/escalations/\\\\[eid\\\\])",
       "Bash(mkdir -p /Users/arpitsingh/Projects/dashboard/app/api/teams/\\\\[id\\\\]/members)",
       "Bash(npm run:*)",
-      "Bash(curl -sv http://localhost:3000/api/teams)"
+      "Bash(curl -sv http://localhost:3000/api/teams)",
+      "Bash(PGPASSWORD=\"Seqfoh-2vapri-fipheg\" psql \"postgresql://postgres.fcuehzobbdqdwltsyxmc@aws-1-ap-south-1.pooler.supabase.com:5432/postgres\" -c \"\\\\d \\\\\"Conversation\\\\\"\")",
+      "Bash(PGPASSWORD=\"Seqfoh-2vapri-fipheg\" psql \"postgresql://postgres.fcuehzobbdqdwltsyxmc@aws-1-ap-south-1.pooler.supabase.com:5432/postgres\" -c \"\\\\dt\")",
+      "Bash(PGPASSWORD=\"Seqfoh-2vapri-fipheg\" psql \"postgresql://postgres.fcuehzobbdqdwltsyxmc@aws-1-ap-south-1.pooler.supabase.com:5432/postgres\" -c \"\\\\d \\\\\"Agent\\\\\"\")",
+      "Bash(python3 -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('imports', p.get\\('exports', {}\\)\\), indent=2\\)\\)\")",
+      "Bash(grep -n \"ColumnNotFound\\\\|columnNotFound\\\\|column_not_found\\\\|42703\" node_modules/@prisma/adapter-pg/dist/*.js)",
+      "Bash(PGPASSWORD=\"Seqfoh-2vapri-fipheg\" psql:*)"
     ]
   }
 }

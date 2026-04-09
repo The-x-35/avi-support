@@ -458,6 +458,16 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           });
           break;
         }
+        case "ai_correction": {
+          const p = evt.payload;
+          if (p.conversationId !== String(conv.id)) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === p.messageId ? { ...m, content: p.content } : m
+            )
+          );
+          break;
+        }
         case "typing": {
           const p = evt.payload;
           if (p.conversationId !== String(conv.id)) return;

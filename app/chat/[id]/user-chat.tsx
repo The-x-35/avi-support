@@ -466,6 +466,17 @@ export function UserChat({
           isDoneRef.current = true;
           break;
         }
+        case "ai_correction": {
+          const p = evt.payload;
+          if (p.conversationId !== conversationId) return;
+          // Replace the content of the corrected message
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === p.messageId ? { ...m, content: p.content } : m
+            )
+          );
+          break;
+        }
         case "control": {
           const p = evt.payload;
           if (p.conversationId !== conversationId) return;

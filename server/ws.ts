@@ -15,6 +15,7 @@ import { jwtVerify } from "jose";
 import { prisma } from "../lib/db/prisma";
 import { getAIProvider } from "../lib/ai";
 import type { ConversationContext } from "../lib/ai/types";
+import { checkResponse, SAFE_FALLBACK } from "../lib/ai/guardrails";
 import { guessCategory } from "../lib/auto-tagger";
 import { createNotifications } from "../lib/notifications";
 import { perf } from "../lib/perf";
@@ -36,6 +37,7 @@ type ServerEvent =
   | { type: "message"; payload: MessagePayload }
   | { type: "ai_chunk"; payload: AiChunkPayload }
   | { type: "ai_done"; payload: { conversationId: string; messageId: string } }
+  | { type: "ai_correction"; payload: { conversationId: string; messageId: string; content: string } }
   | { type: "typing"; payload: TypingPayload }
   | { type: "typing_preview"; payload: { conversationId: string; text: string } }
   | { type: "read_receipt"; payload: { conversationId: string; readAt: string } }
@@ -309,6 +311,9 @@ async function handleAiResponse(conversationId: string) {
     let fullContent = "";
     const ai = getAIProvider();
 
+    // Extract the last user message for guardrail checking
+    const lastUserMsg = [...contextMessages].reverse().find((m) => m.role === "user")?.content ?? "";
+
     for await (const chunk of ai.generateResponse(context)) {
       fullContent += chunk;
       broadcast(conversationId, {
@@ -317,7 +322,7 @@ async function handleAiResponse(conversationId: string) {
       });
     }
 
-    // Finalize message
+    // Finalize message in DB
     await prisma.message.update({
       where: { id: aiMessage.id },
       data: { content: fullContent, isStreaming: false },
@@ -330,11 +335,32 @@ async function handleAiResponse(conversationId: string) {
 
     t.split("ai stream complete");
 
-    // Notify stream done
+    // Notify stream done — user sees the response immediately
     broadcast(conversationId, {
       type: "ai_done",
       payload: { conversationId, messageId: aiMessage.id },
     });
+
+    // Run guardrail check in parallel (non-blocking for the user)
+    checkResponse(lastUserMsg, fullContent)
+      .then(async (result) => {
+        if (!result.safe) {
+          console.warn(`[guardrails] UNSAFE response blocked for conversation ${conversationId}: ${result.reason}`);
+          // Replace the message content in DB with safe fallback
+          await prisma.message.update({
+            where: { id: aiMessage.id },
+            data: { content: SAFE_FALLBACK },
+          });
+          // Notify all clients to replace the message content
+          broadcast(conversationId, {
+            type: "ai_correction",
+            payload: { conversationId, messageId: aiMessage.id, content: SAFE_FALLBACK },
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("[guardrails] check error:", err);
+      });
 
     t.end();
     // Auto-tag in background

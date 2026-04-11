@@ -4,7 +4,7 @@ import { Header } from "@/components/layout/header";
 import { OverviewStats } from "@/components/analytics/overview-stats";
 import { RecentConversations } from "@/components/conversations/recent-conversations";
 import { TopIssuesChart } from "@/components/analytics/top-issues-chart";
-import { SentimentChart } from "@/components/analytics/sentiment-chart";
+import { DailyVolumeChart } from "@/components/analytics/daily-volume-chart";
 
 function StatsSkeleton() {
   return (
@@ -54,10 +54,10 @@ export default function OverviewPage() {
           <OverviewStats />
         </Suspense>
         <div className="grid grid-cols-2 gap-4">
-          <TopIssuesChart />
           <Suspense fallback={<ChartSkeleton />}>
-            <SentimentChart />
+            <DailyVolumeChart />
           </Suspense>
+          <TopIssuesChart />
         </div>
         <Suspense fallback={<ConvSkeleton />}>
           <RecentConversations />

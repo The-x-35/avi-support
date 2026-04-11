@@ -3,7 +3,6 @@ import { authenticateRequest } from "@/lib/auth/api-auth";
 import {
   getOverviewStats,
   getTagDistribution,
-  getSentimentTrend,
   getTopIssues,
   getVolumeByDay,
 } from "@/lib/services/analytics";
@@ -13,7 +12,7 @@ import { withTiming } from "@/lib/perf";
 // Analytics queries are expensive — 20 per agent per minute
 const limiter = createRateLimiter({ limit: 20, windowMs: 60_000 });
 
-const VALID_TYPES = new Set(["overview", "tag_distribution", "sentiment_trend", "top_issues", "volume", "agent_tags", "ai_tags"]);
+const VALID_TYPES = new Set(["overview", "tag_distribution", "top_issues", "volume", "agent_tags", "ai_tags"]);
 
 export const GET = withTiming("GET /api/analytics", async (request: NextRequest) => {
   const auth = await authenticateRequest(request);
@@ -41,7 +40,6 @@ export const GET = withTiming("GET /api/analytics", async (request: NextRequest)
     case "tag_distribution":  return NextResponse.json(await getTagDistribution(days, undefined, dateFrom, dateTo));
     case "agent_tags":        return NextResponse.json(await getTagDistribution(days, "AGENT", dateFrom, dateTo));
     case "ai_tags":           return NextResponse.json(await getTagDistribution(days, "AI", dateFrom, dateTo));
-    case "sentiment_trend":   return NextResponse.json(await getSentimentTrend(days));
     case "top_issues":        return NextResponse.json(await getTopIssues(days, "AI", dateFrom, dateTo));
     case "volume":            return NextResponse.json(await getVolumeByDay(days, dateFrom, dateTo));
     default:                  return NextResponse.json({ error: "Unknown type" }, { status: 400 });

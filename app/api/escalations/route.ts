@@ -22,7 +22,9 @@ export const GET = withTiming("GET /api/escalations", async (request: NextReques
   // Filters
   const status    = sp.getAll("status").filter((s) => VALID_STATUSES.has(s)) as EscalationStatus[];
   const category  = sp.getAll("category").filter((c) => VALID_CATEGORIES.has(c)) as Category[];
-  const teamId    = sp.getAll("teamId").filter(Boolean);
+  const teamId     = sp.getAll("teamId").filter(Boolean);
+  const assigneeId = sp.getAll("assigneeId").filter(Boolean);
+  const tagId      = sp.getAll("tagId").filter(Boolean);
   const q         = sp.get("q")?.trim() ?? "";
   const dueBefore = sp.get("dueBefore");
   const dueAfter  = sp.get("dueAfter");
@@ -42,8 +44,10 @@ export const GET = withTiming("GET /api/escalations", async (request: NextReques
   const where: Record<string, unknown> = {};
   if (status.length)   where.status     = { in: status };
   if (category.length) where.categories = { hasSome: category };
-  if (teamId.length)   where.teamId     = { in: teamId };
-  if (q)               where.title      = { contains: q, mode: "insensitive" };
+  if (teamId.length)     where.teamId     = { in: teamId };
+  if (assigneeId.length) where.assigneeId = { in: assigneeId };
+  if (tagId.length)      where.tagIds     = { hasSome: tagId };
+  if (q)                 where.title      = { contains: q, mode: "insensitive" };
   if (dueBefore)       where.dueDate    = { ...(where.dueDate as object ?? {}), lte: new Date(dueBefore) };
   if (dueAfter)        where.dueDate    = { ...(where.dueDate as object ?? {}), gte: new Date(dueAfter) };
   if (hasNotes === "true")  where.notes = { not: null };
@@ -59,6 +63,7 @@ export const GET = withTiming("GET /api/escalations", async (request: NextReques
       take: limit,
       include: {
         team: { select: { id: true, name: true } },
+        assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
         conversation: {
           select: {
             id: true,

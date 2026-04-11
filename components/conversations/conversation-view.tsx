@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw, Pencil, Trash2, Calendar, AlertTriangle } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw, Pencil, Trash2, Calendar, AlertTriangle, CheckCircle, XCircle, RotateCcw } from "lucide-react";
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
@@ -157,7 +157,7 @@ const ESC_STATUS_COLORS: Record<string, string> = {
   RESOLVED: "bg-green-50 text-green-700",
   CLOSED: "bg-gray-100 text-gray-500",
 };
-const EMPTY_ESC_FORM = { title: "", teamId: "", categories: [] as string[], tagIds: [] as string[], notes: "", dueDate: "", status: "OPEN" };
+const EMPTY_ESC_FORM = { title: "", teamId: "", assigneeId: "", categories: [] as string[], tagIds: [] as string[], notes: "", dueDate: "", status: "OPEN" };
 
 interface ConversationViewProps {
   conversation: Conversation;
@@ -205,15 +205,18 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   const [rightTab, setRightTab] = useState<"general" | "escalations">("general");
 
   // Escalations
+  type TeamMember = { agent: { id: string; name: string; email: string; avatarUrl: string | null } };
+  type TeamWithMembers = { id: string; name: string; members: TeamMember[] };
   type EscalationItem = {
-    id: string; title: string; teamId: string | null; categories: string[]; tagIds: string[];
+    id: string; title: string; teamId: string | null; assigneeId: string | null; categories: string[]; tagIds: string[];
     notes: string | null; dueDate: string | null; status: string;
     team: { id: string; name: string } | null;
+    assignee: { id: string; name: string; email: string; avatarUrl: string | null } | null;
   };
   const [escalations, setEscalations] = useState<EscalationItem[]>([]);
   const [escalationsLoading, setEscalationsLoading] = useState(false);
-  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
-  type EscForm = { title: string; teamId: string; categories: string[]; tagIds: string[]; notes: string; dueDate: string; status: string };
+  const [teams, setTeams] = useState<TeamWithMembers[]>([]);
+  type EscForm = { title: string; teamId: string; assigneeId: string; categories: string[]; tagIds: string[]; notes: string; dueDate: string; status: string };
   const [escForm, setEscForm] = useState<EscForm>(EMPTY_ESC_FORM);
   const [escFormOpen, setEscFormOpen] = useState(false);
   const [escEditId, setEscEditId] = useState<string | null>(null);
@@ -340,7 +343,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       fetch("/api/teams").then((r) => r.json()),
     ]).then(([escs, tms]) => {
       setEscalations(Array.isArray(escs) ? escs : []);
-      setTeams(Array.isArray(tms) ? tms.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })) : []);
+      setTeams(Array.isArray(tms) ? tms : []);
     }).catch(() => {}).finally(() => setEscalationsLoading(false));
     // Also ensure tag defs are loaded for escalation tag picker
     if (allTagDefs.length === 0) {
@@ -719,6 +722,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       const payload = {
         title: escForm.title.trim(),
         teamId: escForm.teamId || null,
+        assigneeId: escForm.assigneeId || null,
         categories: escForm.categories,
         tagIds: escForm.tagIds,
         notes: escForm.notes || null,
@@ -746,6 +750,18 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   async function deleteEscalation(id: string) {
     await fetch(`/api/conversations/${conv.id}/escalations/${id}`, { method: "DELETE" });
     setEscalations((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  async function quickChangeEscStatus(escId: string, newStatus: string) {
+    const res = await fetch(`/api/conversations/${conv.id}/escalations/${escId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: newStatus }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setEscalations((prev) => prev.map((e) => e.id === escId ? updated : e));
+    }
   }
 
   function startCreateTag(name: string) {
@@ -1994,12 +2010,32 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                 {/* Team */}
                 <select
                   value={escForm.teamId}
-                  onChange={(e) => setEscForm((f) => ({ ...f, teamId: e.target.value }))}
+                  onChange={(e) => setEscForm((f) => ({ ...f, teamId: e.target.value, assigneeId: "" }))}
                   className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 text-gray-700 appearance-none"
                 >
                   <option value="">No team</option>
                   {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
+
+                {/* Assignee (team members) */}
+                {escForm.teamId && (() => {
+                  const selectedTeam = teams.find((t) => t.id === escForm.teamId);
+                  const members = selectedTeam?.members ?? [];
+                  return members.length > 0 ? (
+                    <select
+                      value={escForm.assigneeId}
+                      onChange={(e) => setEscForm((f) => ({ ...f, assigneeId: e.target.value }))}
+                      className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 text-gray-700 appearance-none"
+                    >
+                      <option value="">No assignee</option>
+                      {members.map((m) => (
+                        <option key={m.agent.id} value={m.agent.id}>
+                          {m.agent.name || m.agent.email}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null;
+                })()}
 
                 {/* Categories */}
                 <div>
@@ -2127,12 +2163,17 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                       </span>
                     </div>
 
-                    {(esc.team || esc.dueDate) && (
+                    {(esc.team || esc.assignee || esc.dueDate) && (
                       <div className="flex flex-wrap items-center gap-2">
                         {esc.team && (
                           <span className="text-[11px] text-gray-500 flex items-center gap-1">
                             <User className="w-2.5 h-2.5" />
                             {esc.team.name}
+                          </span>
+                        )}
+                        {esc.assignee && (
+                          <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                            &rarr; {esc.assignee.name || esc.assignee.email}
                           </span>
                         )}
                         {esc.dueDate && (
@@ -2173,13 +2214,41 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                       <p className="text-[11px] text-gray-500 leading-relaxed">{esc.notes}</p>
                     )}
 
-                    <div className="flex items-center gap-2 pt-0.5">
+                    <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                      {(esc.status === "OPEN" || esc.status === "IN_PROGRESS") && (
+                        <button
+                          onClick={() => quickChangeEscStatus(esc.id, "RESOLVED")}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-green-600 transition-colors"
+                        >
+                          <CheckCircle className="w-2.5 h-2.5" />
+                          Resolve
+                        </button>
+                      )}
+                      {(esc.status === "RESOLVED" || esc.status === "CLOSED") && (
+                        <button
+                          onClick={() => quickChangeEscStatus(esc.id, "OPEN")}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-amber-600 transition-colors"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          Reopen
+                        </button>
+                      )}
+                      {esc.status !== "CLOSED" && (
+                        <button
+                          onClick={() => quickChangeEscStatus(esc.id, "CLOSED")}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          <XCircle className="w-2.5 h-2.5" />
+                          Close
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setEscEditId(esc.id);
                           setEscForm({
                             title: esc.title,
                             teamId: esc.teamId ?? "",
+                            assigneeId: esc.assigneeId ?? "",
                             categories: esc.categories,
                             tagIds: esc.tagIds,
                             notes: esc.notes ?? "",

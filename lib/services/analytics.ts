@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { Prisma } from "@prisma/client";
-import { startOfDay, subDays, eachDayOfInterval } from "date-fns";
+import { startOfDay, subDays } from "date-fns";
 
 export async function getOverviewStats() {
   const today = startOfDay(new Date());
@@ -12,52 +12,36 @@ export async function getOverviewStats() {
     openCount,
     escalatedCount,
     resolvedToday,
-    aiResolvedToday,
     avgResponseTimeResult,
   ] = await Promise.all([
     prisma.conversation.count({ where: { createdAt: { gte: today } } }),
     prisma.conversation.count({
       where: { createdAt: { gte: yesterday, lt: today } },
     }),
-    prisma.conversation.count({ where: { status: { in: ["OPEN", "PENDING"] } } }),
+    prisma.conversation.count({ where: { status: { in: ["OPEN", "PENDING"] }, lastMessageAt: { not: null } } }),
     prisma.conversation.count({ where: { status: "ESCALATED" } }),
     prisma.conversation.count({
       where: { status: "RESOLVED", updatedAt: { gte: today } },
     }),
-    prisma.conversation.count({
-      where: {
-        status: "RESOLVED",
-        updatedAt: { gte: today },
-        tags: {
-          some: {
-            definition: { name: "Resolved by AI" },
-          },
-        },
-      },
-    }),
-    // Avg response time: avg time between first user message and first AI/agent message
+    // Avg agent response time: for each user message, find the next AGENT
+    // message in the same conversation and compute the time delta.
+    // Excludes AI responses entirely — only human agent replies count.
     prisma.$queryRaw<{ avg_seconds: number }[]>`
-      SELECT AVG(EXTRACT(EPOCH FROM (second_msg."createdAt" - first_msg."createdAt"))) as avg_seconds
-      FROM (
-        SELECT DISTINCT ON ("conversationId") "conversationId", "createdAt"
+      SELECT AVG(EXTRACT(EPOCH FROM (agent_reply."createdAt" - user_msg."createdAt"))) as avg_seconds
+      FROM "Message" user_msg
+      JOIN LATERAL (
+        SELECT "createdAt"
         FROM "Message"
-        WHERE "senderType" = 'USER'
-        ORDER BY "conversationId", "createdAt" ASC
-      ) first_msg
-      JOIN (
-        SELECT DISTINCT ON ("conversationId") "conversationId", "createdAt"
-        FROM "Message"
-        WHERE "senderType" IN ('AI', 'AGENT')
-        ORDER BY "conversationId", "createdAt" ASC
-      ) second_msg ON first_msg."conversationId" = second_msg."conversationId"
-      WHERE first_msg."createdAt" >= ${today}
+        WHERE "conversationId" = user_msg."conversationId"
+          AND "senderType" = 'AGENT'
+          AND "createdAt" > user_msg."createdAt"
+        ORDER BY "createdAt" ASC
+        LIMIT 1
+      ) agent_reply ON true
+      WHERE user_msg."senderType" = 'USER'
+        AND user_msg."createdAt" >= ${today}
     `,
   ]);
-
-  const aiResolutionRate =
-    resolvedToday > 0
-      ? Math.round((aiResolvedToday / resolvedToday) * 100)
-      : 0;
 
   const avgResponseSeconds = avgResponseTimeResult[0]?.avg_seconds ?? 0;
 
@@ -67,8 +51,6 @@ export async function getOverviewStats() {
     openCount,
     escalatedCount,
     resolvedToday,
-    aiResolvedToday,
-    aiResolutionRate,
     avgResponseSeconds: Math.round(avgResponseSeconds),
   };
 }
@@ -98,47 +80,6 @@ export async function getTagDistribution(days = 7, source?: "AGENT" | "AI", date
   }));
 }
 
-export async function getSentimentTrend(days = 14) {
-  const since = startOfDay(subDays(new Date(), days));
-  const interval = eachDayOfInterval({ start: since, end: new Date() });
-
-  const sentimentNames = ["Positive", "Neutral", "Frustrated", "Angry"];
-
-  // Use raw SQL aggregation instead of loading every tag row
-  const rows = await prisma.$queryRaw<
-    Array<{ date: string; name: string; count: bigint }>
-  >`
-    SELECT DATE(t."createdAt") as date, td."name", COUNT(*) as count
-    FROM "Tag" t
-    JOIN "TagDefinition" td ON t."definitionId" = td."id"
-    WHERE t."createdAt" >= ${since}
-      AND td."name" = ANY(${sentimentNames})
-    GROUP BY DATE(t."createdAt"), td."name"
-    ORDER BY date ASC
-  `;
-
-  const byDay = new Map<
-    string,
-    { positive: number; neutral: number; frustrated: number; angry: number }
-  >();
-
-  for (const day of interval) {
-    byDay.set(day.toISOString().split("T")[0], {
-      positive: 0, neutral: 0, frustrated: 0, angry: 0,
-    });
-  }
-
-  for (const row of rows) {
-    const dateStr = typeof row.date === "string" ? row.date : new Date(row.date).toISOString().split("T")[0];
-    const bucket = byDay.get(dateStr);
-    if (bucket) {
-      const val = row.name.toLowerCase() as keyof typeof bucket;
-      if (val in bucket) bucket[val] += Number(row.count);
-    }
-  }
-
-  return Array.from(byDay.entries()).map(([date, counts]) => ({ date, ...counts }));
-}
 
 export async function getTopIssues(days = 7, source?: "AGENT" | "AI", dateFrom?: Date, dateTo?: Date) {
   const since = dateFrom ?? startOfDay(subDays(new Date(), days));

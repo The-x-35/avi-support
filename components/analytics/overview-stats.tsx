@@ -1,7 +1,7 @@
 import { getOverviewStats } from "@/lib/services/analytics";
 import { StatCard } from "@/components/ui/stat-card";
 import { formatSeconds, formatNumber } from "@/lib/utils/format";
-import { MessageSquare, CheckCircle, AlertTriangle, Zap } from "lucide-react";
+import { MessageSquare, CheckCircle, AlertTriangle, Clock } from "lucide-react";
 
 export async function OverviewStats() {
   const stats = await getOverviewStats();
@@ -29,16 +29,15 @@ export async function OverviewStats() {
         icon={<AlertTriangle className="w-4 h-4" />}
       />
       <StatCard
-        label="AI Resolution"
-        value={`${stats.aiResolutionRate}%`}
-        delta={`${stats.aiResolvedToday} of ${stats.resolvedToday} resolved`}
-        deltaType="neutral"
-        icon={<Zap className="w-4 h-4" />}
+        label="Resolved Today"
+        value={stats.resolvedToday}
+        icon={<CheckCircle className="w-4 h-4" />}
       />
       <StatCard
-        label="Avg Response"
-        value={formatSeconds(stats.avgResponseSeconds)}
-        icon={<CheckCircle className="w-4 h-4" />}
+        label="Avg Response Today"
+        value={stats.avgResponseSeconds > 0 ? formatSeconds(stats.avgResponseSeconds) : "—"}
+        delta={stats.avgResponseSeconds > 0 ? undefined : "no agent replies today"}
+        icon={<Clock className="w-4 h-4" />}
       />
     </div>
   );

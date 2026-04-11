@@ -24,7 +24,10 @@ export const GET = withTiming("GET /api/conversations/[id]/escalations", async (
 
   const escalations = await prisma.escalation.findMany({
     where: { conversationId: numId },
-    include: { team: { select: { id: true, name: true } } },
+    include: {
+      team: { select: { id: true, name: true } },
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
 
@@ -54,12 +57,16 @@ export const POST = withTiming("POST /api/conversations/[id]/escalations", async
   const notes = typeof body.notes === "string" ? body.notes.slice(0, 2000) : null;
   const dueDate = body.dueDate ? new Date(body.dueDate) : null;
   const teamId = typeof body.teamId === "string" ? body.teamId : null;
+  const assigneeId = typeof body.assigneeId === "string" && body.assigneeId ? body.assigneeId : null;
   const status = (typeof body.status === "string" && VALID_STATUSES.has(body.status)
     ? body.status : "OPEN") as EscalationStatus;
 
   const escalation = await prisma.escalation.create({
-    data: { conversationId: numId, title, teamId, categories, tagIds, notes, dueDate, status },
-    include: { team: { select: { id: true, name: true } } },
+    data: { conversationId: numId, title, teamId, assigneeId, categories, tagIds, notes, dueDate, status },
+    include: {
+      team: { select: { id: true, name: true } },
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+    },
   });
 
   return NextResponse.json(escalation, { status: 201 });

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { createRateLimiter, tooManyRequests } from "@/lib/rate-limit";
 import { withTiming } from "@/lib/perf";
 import type { Category, EscalationStatus } from "@prisma/client";
+import { createNotifications } from "@/lib/notifications";
 
 const limiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
 const VALID_CATEGORIES = new Set(["CARDS", "ACCOUNT", "SPENDS", "KYC", "GENERAL", "OTHER"]);
@@ -28,13 +29,42 @@ export const PATCH = withTiming("PATCH escalation", async (
   if (typeof body.notes === "string") data.notes = body.notes.slice(0, 2000);
   if (body.dueDate !== undefined) data.dueDate = body.dueDate ? new Date(body.dueDate) : null;
   if (body.teamId !== undefined) data.teamId = body.teamId ?? null;
+  if (body.assigneeId !== undefined) data.assigneeId = body.assigneeId || null;
   if (typeof body.status === "string" && VALID_STATUSES.has(body.status)) data.status = body.status as EscalationStatus;
+
+  // Fetch previous status to detect transitions
+  let previousStatus: string | null = null;
+  if (data.status) {
+    const current = await prisma.escalation.findUnique({
+      where: { id: eid },
+      select: { status: true },
+    });
+    previousStatus = current?.status ?? null;
+  }
 
   const escalation = await prisma.escalation.update({
     where: { id: eid },
     data,
-    include: { team: { select: { id: true, name: true } } },
+    include: {
+      team: { select: { id: true, name: true } },
+      assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
+    },
   });
+
+  // Notify assignee when escalation is resolved
+  if (
+    data.status === "RESOLVED" &&
+    previousStatus !== "RESOLVED" &&
+    escalation.assigneeId
+  ) {
+    createNotifications({
+      agentIds: [escalation.assigneeId],
+      type: "ESCALATED",
+      title: "Escalation resolved",
+      body: `"${escalation.title}" has been resolved`,
+      conversationId: escalation.conversationId,
+    }).catch(() => {});
+  }
 
   return NextResponse.json(escalation);
 });

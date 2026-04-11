@@ -29,6 +29,7 @@ model Agent {
   pushSubscriptions PushSubscription[]
   followedConversations ConversationFollower[]
   escalationTeams       EscalationTeamMember[]
+  assignedEscalations   Escalation[]             @relation("EscalationAssignee")
 
   @@index([email])
   @@index([googleId])
@@ -300,6 +301,7 @@ model Escalation {
   conversationId Int
   title          String
   teamId         String?
+  assigneeId     String?
   categories     String[]
   tagIds         String[]
   notes          String?
@@ -309,9 +311,11 @@ model Escalation {
   updatedAt      DateTime         @updatedAt
   conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   team           EscalationTeam?  @relation(fields: [teamId], references: [id])
+  assignee       Agent?           @relation("EscalationAssignee", fields: [assigneeId], references: [id])
 
   @@index([conversationId])
   @@index([teamId])
+  @@index([assigneeId])
   @@index([status])
 }
 

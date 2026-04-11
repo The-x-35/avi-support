@@ -9,6 +9,8 @@ import {
 } from "@/lib/r2";
 import { prisma } from "@/lib/db/prisma";
 import { getChatSessionFromRequest } from "@/lib/auth/chat-token";
+import { getAccessToken } from "@/lib/auth/cookies";
+import { verifyAccessToken } from "@/lib/auth/jwt";
 
 // ─── In-memory rate limiter ───────────────────────────────────────────────────
 // 10 presign requests per IP per 60 seconds
@@ -49,9 +51,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify chat session
-    const session = await getChatSessionFromRequest(req);
-    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Verify auth — accept either chat widget session OR admin/agent token
+    const chatSession = await getChatSessionFromRequest(req);
+    let isAgent = false;
+
+    if (!chatSession) {
+      const accessToken = getAccessToken(req);
+      if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      try {
+        await verifyAccessToken(accessToken);
+        isAgent = true;
+      } catch {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
 
     const { fileName, mimeType, fileSize, conversationId } = await req.json();
 
@@ -60,14 +73,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Verify the conversation exists, is active, and belongs to this user
-    const endUser = await prisma.endUser.findUnique({ where: { externalId: session.userId }, select: { id: true } });
-    const conversation = endUser
-      ? await prisma.conversation.findUnique({
-          where: { id: conversationIdInt, userId: endUser.id },
-          select: { id: true, status: true },
-        })
-      : null;
+    // Verify conversation exists and is active
+    // For chat widget users, also verify ownership
+    let conversation;
+    if (isAgent) {
+      conversation = await prisma.conversation.findUnique({
+        where: { id: conversationIdInt },
+        select: { id: true, status: true },
+      });
+    } else {
+      const endUser = await prisma.endUser.findUnique({ where: { externalId: chatSession!.userId }, select: { id: true } });
+      conversation = endUser
+        ? await prisma.conversation.findUnique({
+            where: { id: conversationIdInt, userId: endUser.id },
+            select: { id: true, status: true },
+          })
+        : null;
+    }
 
     if (!conversation) {
       return NextResponse.json({ error: "Invalid conversation" }, { status: 403 });

@@ -149,7 +149,7 @@ function MultiChip({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute top-full mt-1.5 left-0 z-20 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden min-w-[160px]">
+          <div className="absolute top-full mt-1.5 left-0 z-20 bg-white border border-gray-200 rounded-xl shadow-lg overflow-y-auto min-w-[160px] max-h-72 py-1">
             {options.map((o) => {
               const on = values.includes(o.value);
               return (

@@ -2004,7 +2004,8 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   placeholder="Title *"
                   value={escForm.title}
                   onChange={(e) => setEscForm((f) => ({ ...f, title: e.target.value }))}
-                  className="w-full text-xs bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 placeholder:text-gray-300 text-gray-800"
+                  autoComplete="off"
+                  className="w-full text-xs font-normal bg-white border border-gray-200 rounded-lg px-2.5 py-2 outline-none focus:border-gray-400 placeholder:text-gray-300 text-gray-800"
                 />
 
                 {/* Team */}

@@ -114,6 +114,17 @@ select:focus-visible {
   border-color: inherit;
 }
 
+/* Prevent Chrome autofill from overriding font-weight (looks bold) */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: inherit;
+  font-weight: inherit !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 /* Smooth transitions */
 a, button {
   transition: all 0.15s ease;

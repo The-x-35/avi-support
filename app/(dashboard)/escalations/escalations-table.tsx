@@ -7,7 +7,7 @@ import { formatRelativeTime, categoryLabel } from "@/lib/utils/format";
 import {
   Search, X, ChevronDown, ChevronUp, ChevronsUpDown,
   Calendar, SlidersHorizontal, RotateCcw, ChevronLeft, ChevronRight,
-  CheckCircle, XCircle, ExternalLink, User,
+  CheckCircle, XCircle, ExternalLink, User, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -196,6 +196,7 @@ export function EscalationsTable({ currentAgentId }: { currentAgentId: string })
   const [tagDefs, setTagDefs] = useState<TagDef[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   // Load teams + tags first, then set initial filters with agent's team pre-selected
   useEffect(() => {
@@ -239,17 +240,22 @@ export function EscalationsTable({ currentAgentId }: { currentAgentId: string })
   function reset() { setFilters((f) => f ? { ...DEFAULT, teamId: f.teamId } : DEFAULT); }
 
   async function handleQuickStatusChange(escId: string, convId: number, newStatus: string) {
-    const res = await fetch(`/api/conversations/${convId}/escalations/${escId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setData((prev) => prev ? {
-        ...prev,
-        escalations: prev.escalations.map((e) => e.id === escId ? { ...e, ...updated } : e),
-      } : prev);
+    setActionLoading(newStatus);
+    try {
+      const res = await fetch(`/api/conversations/${convId}/escalations/${escId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setData((prev) => prev ? {
+          ...prev,
+          escalations: prev.escalations.map((e) => e.id === escId ? { ...e, ...updated } : e),
+        } : prev);
+      }
+    } finally {
+      setActionLoading(null);
     }
   }
 
@@ -760,27 +766,30 @@ export function EscalationsTable({ currentAgentId }: { currentAgentId: string })
             {(selectedEscalation.status === "OPEN" || selectedEscalation.status === "IN_PROGRESS") && (
               <button
                 onClick={() => handleQuickStatusChange(selectedEscalation.id, selectedEscalation.conversation.id, "RESOLVED")}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors"
+                disabled={actionLoading !== null}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors disabled:opacity-50"
               >
-                <CheckCircle className="w-3.5 h-3.5" />
+                {actionLoading === "RESOLVED" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
                 Resolve
               </button>
             )}
             {(selectedEscalation.status === "RESOLVED" || selectedEscalation.status === "CLOSED") && (
               <button
                 onClick={() => handleQuickStatusChange(selectedEscalation.id, selectedEscalation.conversation.id, "OPEN")}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 transition-colors"
+                disabled={actionLoading !== null}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 transition-colors disabled:opacity-50"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
+                {actionLoading === "OPEN" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
                 Reopen
               </button>
             )}
             {selectedEscalation.status !== "CLOSED" && (
               <button
                 onClick={() => handleQuickStatusChange(selectedEscalation.id, selectedEscalation.conversation.id, "CLOSED")}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors"
+                disabled={actionLoading !== null}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors disabled:opacity-50"
               >
-                <XCircle className="w-3.5 h-3.5" />
+                {actionLoading === "CLOSED" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
                 Close
               </button>
             )}

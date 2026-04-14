@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
       Body: buffer,
       ContentType: file.type,
       ContentLength: buffer.byteLength,
+      ACL: "public-read",
     }));
 
     const url = `${R2_PUBLIC_URL}/${key}`;

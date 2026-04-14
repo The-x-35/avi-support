@@ -7,7 +7,7 @@ export async function DailyVolumeChart() {
   return (
     <div className="bg-white border border-gray-100 rounded-xl p-5">
       <div className="mb-4">
-        <h3 className="text-sm font-semibold text-gray-900">Daily Volume</h3>
+        <h3 className="text-sm font-semibold text-gray-900">Daily Conversations</h3>
         <p className="text-xs text-gray-400 mt-0.5">Conversations started per day (last 30 days)</p>
       </div>
       <BarChart

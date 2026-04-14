@@ -7,7 +7,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, StatusBadge, PriorityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatMessageTime, formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw, Pencil, Trash2, Calendar, AlertTriangle, CheckCircle, XCircle, RotateCcw } from "lucide-react";
+import { Bot, User, ChevronLeft, Play, UserCheck, ArrowRight, Send, History, X, Plus, Check, ChevronDown, Tag as TagIcon, Sparkles, Lock, EyeOff, Paperclip, Bold, Italic, Underline, Bell, BellOff, GitMerge, RefreshCw, Pencil, Trash2, Calendar, AlertTriangle, CheckCircle, XCircle, RotateCcw, Loader2 } from "lucide-react";
 import imageCompression from "browser-image-compression";
 import { uploadMedia } from "@/lib/utils/upload";
 import { agentWsManager } from "@/lib/agent-ws";
@@ -193,6 +193,8 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   // Editing state
   const [editOpen, setEditOpen] = useState<string | null>(null);
+  const [fieldStatus, setFieldStatus] = useState<Record<string, "saving" | "saved">>({});
+  const fieldTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [tagSearch, setTagSearch] = useState("");
@@ -671,6 +673,13 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   }
 
   async function patchConv(data: Record<string, unknown>) {
+    const keyMap: Record<string, string> = { status: "status", priority: "priority", categories: "category", assignedAgentId: "agent" };
+    const field = keyMap[Object.keys(data)[0]] ?? Object.keys(data)[0];
+
+    // Clear any pending "saved" timer for this field
+    if (fieldTimers.current[field]) clearTimeout(fieldTimers.current[field]);
+    setFieldStatus((s) => ({ ...s, [field]: "saving" }));
+
     // Optimistic update
     const prev = conv;
     setConv((c) => ({ ...c, ...data }));
@@ -679,7 +688,15 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     });
-    if (!res.ok) setConv(prev); // rollback on failure
+    if (!res.ok) {
+      setConv(prev); // rollback on failure
+      setFieldStatus((s) => { const next = { ...s }; delete next[field]; return next; });
+    } else {
+      setFieldStatus((s) => ({ ...s, [field]: "saved" }));
+      fieldTimers.current[field] = setTimeout(() => {
+        setFieldStatus((s) => { const next = { ...s }; delete next[field]; return next; });
+      }, 1500);
+    }
   }
 
   async function removeTag(tagId: string) {
@@ -1552,6 +1569,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             open={editOpen === "status"}
             onToggle={() => setEditOpen(editOpen === "status" ? null : "status")}
             display={<StatusBadge status={conv.status} />}
+            status={fieldStatus.status}
           >
             {STATUS_OPTIONS.map((s) => (
               <DropdownOption
@@ -1570,6 +1588,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             open={editOpen === "priority"}
             onToggle={() => setEditOpen(editOpen === "priority" ? null : "priority")}
             display={<PriorityBadge priority={conv.priority} />}
+            status={fieldStatus.priority}
           >
             {PRIORITY_OPTIONS.map((p) => (
               <DropdownOption
@@ -1587,6 +1606,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             label="Category"
             open={editOpen === "category"}
             onToggle={() => setEditOpen(editOpen === "category" ? null : "category")}
+            status={fieldStatus.category}
             display={
               <div className="flex flex-wrap gap-1">
                 {conv.categories.length > 0
@@ -1626,6 +1646,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
             label="Assigned"
             open={editOpen === "agent"}
             onToggle={() => setEditOpen(editOpen === "agent" ? null : "agent")}
+            status={fieldStatus.agent}
             display={
               conv.assignedAgent ? (
                 <div className="flex items-center gap-1.5">
@@ -2390,12 +2411,14 @@ function EditableField({
   open,
   onToggle,
   children,
+  status,
 }: {
   label: string;
   display: React.ReactNode;
   open: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  status?: "saving" | "saved";
 }) {
   return (
     <div>
@@ -2403,7 +2426,11 @@ function EditableField({
         onClick={onToggle}
         className="w-full flex items-center justify-between py-1.5 rounded-lg hover:bg-gray-50 px-1 -mx-1 transition-colors group"
       >
-        <span className="text-xs text-gray-400">{label}</span>
+        <span className="text-xs text-gray-400 flex items-center gap-1.5">
+          {label}
+          {status === "saving" && <Loader2 className="w-3 h-3 text-gray-400 animate-spin" />}
+          {status === "saved" && <Check className="w-3 h-3 text-green-500" />}
+        </span>
         <div className="flex items-center gap-1">
           <div className="text-xs">{display}</div>
           <ChevronDown

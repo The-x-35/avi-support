@@ -5,34 +5,39 @@ export interface UploadedMedia {
   fileName: string;
 }
 
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB — under Vercel's 4.5 MB body limit
+const SINGLE_UPLOAD_LIMIT = 4 * 1024 * 1024; // 4 MB — use single upload below this
+
 /**
  * Upload a file and return media metadata + mediaId.
  *
- * Images  → POST /api/upload/file  (compressed to <2MB, safe under Vercel's 4.5MB limit)
- * Videos  → presign → PUT directly to R2 → POST /api/upload/confirm
- *           (bypasses Vercel entirely, no size limit from the server side)
+ * Small files (<4.5MB)  → POST /api/upload/file  (single request)
+ * Large files (>=4.5MB) → chunked multipart upload via /api/upload/multipart/*
  */
 export async function uploadMedia(file: File, conversationId: string): Promise<UploadedMedia> {
-  const isVideo = file.type.startsWith("video/");
-
-  if (!isVideo) {
-    // ── Images: go through the Next.js route ──────────────────────────────────
-    const form = new FormData();
-    form.append("file", file);
-    form.append("conversationId", conversationId);
-
-    const res = await fetch("/api/upload/file", { method: "POST", body: form });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
-    }
-    return res.json();
+  if (file.size < SINGLE_UPLOAD_LIMIT) {
+    return uploadSingle(file, conversationId);
   }
 
-  // ── Videos: presigned URL → direct PUT to R2 ─────────────────────────────
+  return uploadChunked(file, conversationId);
+}
 
-  // Step 1: get a presigned PUT URL from the server
-  const presignRes = await fetch("/api/upload/presign", {
+async function uploadSingle(file: File, conversationId: string): Promise<UploadedMedia> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("conversationId", conversationId);
+
+  const res = await fetch("/api/upload/file", { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
+async function uploadChunked(file: File, conversationId: string): Promise<UploadedMedia> {
+  // Step 1: init multipart upload
+  const initRes = await fetch("/api/upload/multipart/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -43,35 +48,50 @@ export async function uploadMedia(file: File, conversationId: string): Promise<U
     }),
   });
 
-  if (!presignRes.ok) {
-    const body = await presignRes.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? "Failed to get upload URL");
+  if (!initRes.ok) {
+    const body = await initRes.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Failed to init upload");
   }
 
-  const { uploadUrl, key } = await presignRes.json() as { uploadUrl: string; key: string };
+  const { uploadId, key } = await initRes.json() as { uploadId: string; key: string };
 
-  // Step 2: PUT the file directly to R2 (no Vercel in the path)
-  const putRes = await fetch(uploadUrl, {
-    method: "PUT",
-    body: file,
-    headers: { "Content-Type": file.type },
-  });
+  // Step 2: upload chunks sequentially as temp S3 objects
+  const totalParts = Math.ceil(file.size / CHUNK_SIZE);
 
-  if (!putRes.ok) {
-    throw new Error(`Storage upload failed (${putRes.status})`);
+  for (let i = 0; i < totalParts; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const chunk = file.slice(start, end);
+    const partNumber = i + 1;
+
+    const form = new FormData();
+    form.append("chunk", chunk);
+    form.append("key", key);
+    form.append("uploadId", uploadId);
+    form.append("partNumber", String(partNumber));
+
+    const partRes = await fetch("/api/upload/multipart/part", {
+      method: "POST",
+      body: form,
+    });
+
+    if (!partRes.ok) {
+      const body = await partRes.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `Chunk ${partNumber}/${totalParts} failed`);
+    }
   }
 
-  // Step 3: tell the server to create the Media DB record
-  const confirmRes = await fetch("/api/upload/confirm", {
+  // Step 3: server assembles temp objects into final file + creates Media record
+  const completeRes = await fetch("/api/upload/multipart/complete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, mimeType: file.type, fileName: file.name }),
+    body: JSON.stringify({ key, uploadId, totalParts, mimeType: file.type, fileName: file.name }),
   });
 
-  if (!confirmRes.ok) {
-    const body = await confirmRes.json().catch(() => ({}));
-    throw new Error((body as { error?: string }).error ?? "Failed to confirm upload");
+  if (!completeRes.ok) {
+    const body = await completeRes.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Failed to complete upload");
   }
 
-  return confirmRes.json();
+  return completeRes.json();
 }

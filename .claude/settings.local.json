@@ -57,7 +57,8 @@
       "Bash(python3 -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\(json.dumps\\(p.get\\('imports', p.get\\('exports', {}\\)\\), indent=2\\)\\)\")",
       "Bash(grep -n \"ColumnNotFound\\\\|columnNotFound\\\\|column_not_found\\\\|42703\" node_modules/@prisma/adapter-pg/dist/*.js)",
       "Bash(PGPASSWORD=\"Seqfoh-2vapri-fipheg\" psql:*)",
-      "Bash(NODE_OPTIONS='--dns-result-order=verbatim' npx prisma:*)"
+      "Bash(NODE_OPTIONS='--dns-result-order=verbatim' npx prisma:*)",
+      "Bash(psql *)"
     ]
   }
 }

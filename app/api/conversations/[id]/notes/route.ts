@@ -13,12 +13,24 @@ export const GET = withTiming("GET /api/conversations/[id]/notes", async (reques
 
   const { id } = await params;
   const numId = parseInt(id);
+
+  const url = new URL(request.url);
+  const cursor = url.searchParams.get("cursor");
+  const rawLimit = parseInt(url.searchParams.get("limit") ?? "50");
+  const limit = Math.min(Math.max(1, Number.isNaN(rawLimit) ? 50 : rawLimit), 100);
+
   const notes = await prisma.note.findMany({
     where: { conversationId: numId },
     include: { agent: { select: { id: true, name: true, avatarUrl: true } } },
     orderBy: { createdAt: "asc" },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
-  return NextResponse.json(notes);
+
+  const hasMore = notes.length > limit;
+  if (hasMore) notes.pop();
+
+  return NextResponse.json({ notes, hasMore });
 });
 
 export const POST = withTiming("POST /api/conversations/[id]/notes", async (request: NextRequest, { params }: { params: Promise<{ id: string }> }) => {

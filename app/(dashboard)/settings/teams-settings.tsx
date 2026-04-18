@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Avatar } from "@/components/ui/avatar";
-import { Plus, X, Pencil, Check } from "lucide-react";
+import { Plus, X, Pencil, Check, Loader2 } from "lucide-react";
 
 interface AgentBasic {
   id: string;
@@ -33,6 +33,7 @@ export function TeamsSettings({ agents }: { agents: AgentBasic[] }) {
   const [renameVal, setRenameVal] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
   const [addingMemberTo, setAddingMemberTo] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/teams")
@@ -64,20 +65,29 @@ export function TeamsSettings({ agents }: { agents: AgentBasic[] }) {
   }
 
   async function deleteTeam(id: string) {
-    await fetch(`/api/teams/${id}`, { method: "DELETE" });
-    setTeams((prev) => prev.filter((t) => t.id !== id));
+    setActionLoading(`delete-${id}`);
+    try {
+      await fetch(`/api/teams/${id}`, { method: "DELETE" });
+      setTeams((prev) => prev.filter((t) => t.id !== id));
+    } finally { setActionLoading(null); }
   }
 
   async function addMember(teamId: string, agentId: string) {
-    const r = await fetch(`/api/teams/${teamId}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId }) });
-    const member = await r.json();
-    setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, members: [...t.members, member] } : t)));
-    setAddingMemberTo(null);
+    setActionLoading(`add-${teamId}-${agentId}`);
+    try {
+      const r = await fetch(`/api/teams/${teamId}/members`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agentId }) });
+      const member = await r.json();
+      setTeams((prev) => prev.map((t) => (t.id === teamId ? { ...t, members: [...t.members, member] } : t)));
+      setAddingMemberTo(null);
+    } finally { setActionLoading(null); }
   }
 
   async function removeMember(teamId: string, agentId: string) {
-    await fetch(`/api/teams/${teamId}/members?agentId=${agentId}`, { method: "DELETE" });
-    setTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, members: t.members.filter((m) => m.agentId !== agentId) } : t));
+    setActionLoading(`remove-${teamId}-${agentId}`);
+    try {
+      await fetch(`/api/teams/${teamId}/members?agentId=${agentId}`, { method: "DELETE" });
+      setTeams((prev) => prev.map((t) => t.id === teamId ? { ...t, members: t.members.filter((m) => m.agentId !== agentId) } : t));
+    } finally { setActionLoading(null); }
   }
 
   return (
@@ -138,8 +148,8 @@ export function TeamsSettings({ agents }: { agents: AgentBasic[] }) {
                       <button onClick={() => { setRenamingId(team.id); setRenameVal(team.name); }} className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors">
                         <Pencil className="w-3 h-3" />
                       </button>
-                      <button onClick={() => deleteTeam(team.id)} className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-red-400 hover:bg-red-50 rounded transition-colors">
-                        <X className="w-3 h-3" />
+                      <button onClick={() => deleteTeam(team.id)} disabled={actionLoading === `delete-${team.id}`} className="w-6 h-6 flex items-center justify-center text-gray-300 hover:text-red-400 hover:bg-red-50 rounded transition-colors disabled:opacity-40">
+                        {actionLoading === `delete-${team.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
                       </button>
                     </>
                   )}
@@ -153,8 +163,8 @@ export function TeamsSettings({ agents }: { agents: AgentBasic[] }) {
                       <Avatar name={m.agent.name} src={m.agent.avatarUrl} size="xs" />
                       <span className="text-xs font-medium text-gray-700 flex-1">{m.agent.name}</span>
                       <span className="text-[11px] text-gray-400">{m.agent.email}</span>
-                      <button onClick={() => removeMember(team.id, m.agentId)} className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-400 rounded transition-all">
-                        <X className="w-3 h-3" />
+                      <button onClick={() => removeMember(team.id, m.agentId)} disabled={actionLoading === `remove-${team.id}-${m.agentId}`} className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-400 rounded transition-all disabled:opacity-100">
+                        {actionLoading === `remove-${team.id}-${m.agentId}` ? <Loader2 className="w-3 h-3 animate-spin text-gray-400" /> : <X className="w-3 h-3" />}
                       </button>
                     </div>
                   ))}
@@ -170,8 +180,8 @@ export function TeamsSettings({ agents }: { agents: AgentBasic[] }) {
                               <p className="px-3 py-2 text-xs text-gray-400">All agents already added</p>
                             ) : (
                               addableAgents.map((a) => (
-                                <button key={a.id} onClick={() => addMember(team.id, a.id)} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 transition-colors text-left">
-                                  <Avatar name={a.name} src={a.avatarUrl} size="xs" />
+                                <button key={a.id} onClick={() => addMember(team.id, a.id)} disabled={actionLoading === `add-${team.id}-${a.id}`} className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 transition-colors text-left disabled:opacity-50">
+                                  {actionLoading === `add-${team.id}-${a.id}` ? <Loader2 className="w-5 h-5 animate-spin text-gray-400 shrink-0" /> : <Avatar name={a.name} src={a.avatarUrl} size="xs" />}
                                   <div className="min-w-0">
                                     <p className="text-xs font-medium text-gray-800">{a.name}</p>
                                     <p className="text-[11px] text-gray-400 truncate">{a.email}</p>

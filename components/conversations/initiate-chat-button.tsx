@@ -140,8 +140,9 @@ export function InitiateChatButton() {
               <button
                 type="submit"
                 disabled={loading || !email.trim()}
-                className="w-full py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors mt-1"
+                className="w-full py-2.5 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors mt-1 flex items-center justify-center gap-2"
               >
+                {loading && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />}
                 {loading ? "Creating…" : "Start conversation"}
               </button>
             </form>

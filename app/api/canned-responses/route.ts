@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
   const existing = await prisma.cannedResponse.findMany({
     where: { agentId: auth.payload.agentId },
     orderBy: { createdAt: "asc" },
+    take: 200,
   });
 
   // Seed defaults for new agents

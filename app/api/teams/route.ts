@@ -14,10 +14,12 @@ export const GET = withTiming("GET /api/teams", async (request: NextRequest) => 
 
   const teams = await prisma.escalationTeam.findMany({
     orderBy: { name: "asc" },
+    take: 100,
     include: {
       members: {
         include: { agent: { select: { id: true, name: true, email: true, avatarUrl: true, role: true } } },
         orderBy: { createdAt: "asc" },
+        take: 100,
       },
     },
   });

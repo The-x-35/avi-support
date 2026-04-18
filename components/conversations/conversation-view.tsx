@@ -248,6 +248,10 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
 
   // Sidebar conversations
   const [sidebarConvs, setSidebarConvs] = useState<ConvSummary[]>([]);
+  const [sidebarLoading, setSidebarLoading] = useState(true);
+  const [sidebarHasMore, setSidebarHasMore] = useState(false);
+  const [sidebarPage, setSidebarPage] = useState(1);
+  const [sidebarLoadingMore, setSidebarLoadingMore] = useState(false);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [switchingConv, setSwitchingConv] = useState(false);
 
@@ -275,7 +279,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
   // Fetch user's conversation history
   useEffect(() => {
     setHistoryLoading(true);
-    fetch(`/api/conversations?userId=${conv.user.id}&limit=20`)
+    fetch(`/api/conversations?userId=${conv.user.id}&limit=20&skipCount=true`)
       .then((r) => r.json())
       .then((d) => setUserHistory(d.conversations ?? []))
       .catch(() => setUserHistory([]))
@@ -353,23 +357,68 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }, [rightTab, conv.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch sidebar conversations
+  // Fetch sidebar conversations (paginated)
+  const SIDEBAR_PAGE_SIZE = 30;
   useEffect(() => {
-    fetch("/api/conversations?limit=50&status=OPEN")
+    setSidebarLoading(true);
+    fetch(`/api/conversations?limit=${SIDEBAR_PAGE_SIZE}&status=OPEN&skipCount=true`)
       .then((r) => r.json())
-      .then((d) => setSidebarConvs(d.conversations ?? []))
-      .catch(() => {});
+      .then((d) => {
+        const convs = d.conversations ?? [];
+        setSidebarConvs(convs);
+        setSidebarHasMore(convs.length >= SIDEBAR_PAGE_SIZE);
+        setSidebarPage(1);
+      })
+      .catch(() => {})
+      .finally(() => setSidebarLoading(false));
   }, []);
 
-  // Fetch notes for this conversation
+  async function loadMoreSidebar() {
+    if (sidebarLoadingMore || !sidebarHasMore) return;
+    setSidebarLoadingMore(true);
+    const nextPage = sidebarPage + 1;
+    try {
+      const res = await fetch(`/api/conversations?limit=${SIDEBAR_PAGE_SIZE}&page=${nextPage}&status=OPEN&skipCount=true`);
+      const d = await res.json();
+      const convs = d.conversations ?? [];
+      setSidebarConvs((prev) => [...prev, ...convs]);
+      setSidebarHasMore(convs.length >= SIDEBAR_PAGE_SIZE);
+      setSidebarPage(nextPage);
+    } finally {
+      setSidebarLoadingMore(false);
+    }
+  }
+
+  // Fetch notes for this conversation (paginated)
+  const [notesHasMore, setNotesHasMore] = useState(false);
+  const [notesLoadingMore, setNotesLoadingMore] = useState(false);
+
   useEffect(() => {
     setNotesLoading(true);
-    fetch(`/api/conversations/${conv.id}/notes`)
+    fetch(`/api/conversations/${conv.id}/notes?limit=50`)
       .then((r) => r.json())
-      .then((data) => setNotes(Array.isArray(data) ? data : []))
+      .then((data) => {
+        setNotes(Array.isArray(data.notes) ? data.notes : Array.isArray(data) ? data : []);
+        setNotesHasMore(data.hasMore ?? false);
+      })
       .catch(() => {})
       .finally(() => setNotesLoading(false));
   }, [conv.id]);
+
+  async function loadMoreNotes() {
+    if (notesLoadingMore || !notesHasMore || notes.length === 0) return;
+    setNotesLoadingMore(true);
+    try {
+      const lastId = notes[notes.length - 1].id;
+      const res = await fetch(`/api/conversations/${conv.id}/notes?limit=50&cursor=${lastId}`);
+      const data = await res.json();
+      const moreNotes = Array.isArray(data.notes) ? data.notes : [];
+      setNotes((prev) => [...prev, ...moreNotes]);
+      setNotesHasMore(data.hasMore ?? false);
+    } finally {
+      setNotesLoadingMore(false);
+    }
+  }
 
 
   // WebSocket setup — uses a persistent singleton so switching conversations
@@ -663,7 +712,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
       setMergeMode(false);
       setMergeSelected(new Set());
       // Refresh user history
-      fetch(`/api/conversations?userId=${conv.user.id}&limit=20`)
+      fetch(`/api/conversations?userId=${conv.user.id}&limit=20&skipCount=true`)
         .then((r) => r.json())
         .then((d) => setUserHistory(d.conversations ?? []))
         .catch(() => {});
@@ -764,20 +813,32 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }
 
+  const [escActionLoading, setEscActionLoading] = useState<string | null>(null);
+
   async function deleteEscalation(id: string) {
-    await fetch(`/api/conversations/${conv.id}/escalations/${id}`, { method: "DELETE" });
-    setEscalations((prev) => prev.filter((e) => e.id !== id));
+    setEscActionLoading(`delete-${id}`);
+    try {
+      await fetch(`/api/conversations/${conv.id}/escalations/${id}`, { method: "DELETE" });
+      setEscalations((prev) => prev.filter((e) => e.id !== id));
+    } finally {
+      setEscActionLoading(null);
+    }
   }
 
   async function quickChangeEscStatus(escId: string, newStatus: string) {
-    const res = await fetch(`/api/conversations/${conv.id}/escalations/${escId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setEscalations((prev) => prev.map((e) => e.id === escId ? updated : e));
+    setEscActionLoading(`${newStatus}-${escId}`);
+    try {
+      const res = await fetch(`/api/conversations/${conv.id}/escalations/${escId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setEscalations((prev) => prev.map((e) => e.id === escId ? updated : e));
+      }
+    } finally {
+      setEscActionLoading(null);
     }
   }
 
@@ -842,9 +903,13 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
     }
   }
 
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
+
   async function deleteNote(noteId: string) {
+    setDeletingNoteId(noteId);
     setNotes((n) => n.filter((note) => note.id !== noteId));
     await fetch(`/api/conversations/${conv.id}/notes?noteId=${noteId}`, { method: "DELETE" });
+    setDeletingNoteId(null);
   }
 
   async function switchConversation(id: number) {
@@ -1028,7 +1093,21 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
           <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Conversations</span>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {(() => {
+          {sidebarLoading ? (
+            <div className="divide-y divide-gray-50">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="px-3 py-3 animate-pulse">
+                  <div className="flex items-start gap-2">
+                    <div className="w-7 h-7 rounded-full bg-gray-100 shrink-0" />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="h-3 w-24 bg-gray-100 rounded" />
+                      <div className="h-2 w-32 bg-gray-50 rounded" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (() => {
             // Deduplicate: one row per user, their most recent conversation
             const seenUsers = new Set<string>();
             const deduped: ConvSummary[] = [];
@@ -1079,12 +1158,30 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
               </button>
             );
           })}
+          {sidebarHasMore && (
+            <button
+              onClick={loadMoreSidebar}
+              disabled={sidebarLoadingMore}
+              className="w-full py-2.5 text-[11px] text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40 border-b border-gray-50"
+            >
+              {sidebarLoadingMore ? "Loading…" : "Load more"}
+            </button>
+          )}
         </div>
       </div>
 
       {/* Main chat area */}
 
-      <div className="flex flex-col flex-1 min-w-0 border-r border-gray-100">
+      <div className="flex flex-col flex-1 min-w-0 border-r border-gray-100 relative">
+        {/* Conversation switching overlay */}
+        {switchingConv && (
+          <div className="absolute inset-0 z-30 bg-white/70 backdrop-blur-[2px] flex items-center justify-center">
+            <div className="flex items-center gap-2.5">
+              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+              <span className="text-sm text-gray-500">Loading conversation…</span>
+            </div>
+          </div>
+        )}
         {/* Chat header */}
         <div className="h-14 flex items-center gap-3 px-5 border-b border-gray-100 bg-white shrink-0">
           <Link href="/live" className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -1128,7 +1225,7 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
               )}
             >
-              {following ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
+              {followLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : following ? <Bell className="w-3.5 h-3.5" /> : <BellOff className="w-3.5 h-3.5" />}
               {following ? "Following" : "Follow"}
             </button>
 
@@ -1880,6 +1977,15 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                   </div>
                 </div>
               ))}
+              {notesHasMore && (
+                <button
+                  onClick={loadMoreNotes}
+                  disabled={notesLoadingMore}
+                  className="w-full text-center py-1.5 text-[11px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-40"
+                >
+                  {notesLoadingMore ? "Loading…" : "Load older notes"}
+                </button>
+              )}
             </div>
           )}
 
@@ -2240,27 +2346,30 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                       {(esc.status === "OPEN" || esc.status === "IN_PROGRESS") && (
                         <button
                           onClick={() => quickChangeEscStatus(esc.id, "RESOLVED")}
-                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-green-600 transition-colors"
+                          disabled={escActionLoading !== null}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-green-600 transition-colors disabled:opacity-40"
                         >
-                          <CheckCircle className="w-2.5 h-2.5" />
+                          {escActionLoading === `RESOLVED-${esc.id}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <CheckCircle className="w-2.5 h-2.5" />}
                           Resolve
                         </button>
                       )}
                       {(esc.status === "RESOLVED" || esc.status === "CLOSED") && (
                         <button
                           onClick={() => quickChangeEscStatus(esc.id, "OPEN")}
-                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-amber-600 transition-colors"
+                          disabled={escActionLoading !== null}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-amber-600 transition-colors disabled:opacity-40"
                         >
-                          <RotateCcw className="w-2.5 h-2.5" />
+                          {escActionLoading === `OPEN-${esc.id}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RotateCcw className="w-2.5 h-2.5" />}
                           Reopen
                         </button>
                       )}
                       {esc.status !== "CLOSED" && (
                         <button
                           onClick={() => quickChangeEscStatus(esc.id, "CLOSED")}
-                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+                          disabled={escActionLoading !== null}
+                          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-40"
                         >
-                          <XCircle className="w-2.5 h-2.5" />
+                          {escActionLoading === `CLOSED-${esc.id}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <XCircle className="w-2.5 h-2.5" />}
                           Close
                         </button>
                       )}
@@ -2279,16 +2388,18 @@ export function ConversationView({ conversation: initial, currentAgentId }: Conv
                           });
                           setEscFormOpen(true);
                         }}
-                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-700 transition-colors"
+                        disabled={escActionLoading !== null}
+                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-40"
                       >
                         <Pencil className="w-2.5 h-2.5" />
                         Edit
                       </button>
                       <button
                         onClick={() => deleteEscalation(esc.id)}
-                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-red-500 transition-colors"
+                        disabled={escActionLoading !== null}
+                        className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40"
                       >
-                        <Trash2 className="w-2.5 h-2.5" />
+                        {escActionLoading === `delete-${esc.id}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}
                         Delete
                       </button>
                     </div>

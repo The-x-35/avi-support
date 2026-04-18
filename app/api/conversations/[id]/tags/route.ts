@@ -21,6 +21,7 @@ export const GET = withTiming("GET /api/conversations/[id]/tags", async (
     where: { conversationId: numId },
     include: { definition: true },
     orderBy: { createdAt: "asc" },
+    take: 100,
   });
 
   return NextResponse.json(tags);

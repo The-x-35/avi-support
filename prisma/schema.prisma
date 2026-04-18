@@ -58,6 +58,7 @@ model Note {
   agent          Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
+  @@index([conversationId, createdAt])
   @@index([agentId])
 }
 
@@ -130,6 +131,7 @@ model Conversation {
   // Two-column filter combos (my-issues: assignedAgent + status, live: status + isAiPaused)
   @@index([assignedAgentId, status, lastMessageAt(sort: Desc)])
   @@index([status, isAiPaused, lastMessageAt(sort: Desc)])
+  @@index([priority, lastMessageAt(sort: Desc)])
 }
 
 model Media {
@@ -160,6 +162,10 @@ model Message {
   @@index([senderType])
   // Covers getConversationById: WHERE conversationId = ? ORDER BY createdAt ASC
   @@index([conversationId, createdAt])
+  // Covers suggestions: WHERE conversationId = ? AND isPrivate = false ORDER BY createdAt
+  @@index([conversationId, isPrivate, createdAt])
+  // Covers stale streaming cleanup (now background): WHERE conversationId = ? AND isStreaming = true
+  @@index([conversationId, isStreaming])
 }
 
 model TagDefinition {
@@ -317,6 +323,8 @@ model Escalation {
   @@index([teamId])
   @@index([assigneeId])
   @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 enum EscalationStatus {

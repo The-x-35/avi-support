@@ -56,13 +56,17 @@ export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds =
   const [aiEnabled, setAiEnabled] = useState(true);
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [followedIds, setFollowedIds] = useState<Set<number>>(() => new Set(initialFollowedIds));
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const PAGE_SIZE = 50;
 
   const fetchData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
 
-    const params = new URLSearchParams({ limit: "100", skipCount: "true" });
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), skipCount: "false" });
     if (status !== "ALL") params.set("status", status);
     if (search) params.set("search", search);
     if (category) params.set("category", category);
@@ -87,9 +91,43 @@ export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds =
 
     setUsers(deduped);
     setTotal(data.total);
+    setPage(1);
+    setHasMore(data.conversations.length >= PAGE_SIZE);
     if (!silent) setLoading(false);
     else setRefreshing(false);
   }, [status, search, category, priority, aiPaused, tag, assignedAgentId, unassigned]);
+
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(nextPage), skipCount: "true" });
+    if (status !== "ALL") params.set("status", status);
+    if (search) params.set("search", search);
+    if (category) params.set("category", category);
+    if (priority) params.set("priority", priority);
+    if (aiPaused) params.set("isAiPaused", "true");
+    if (tag) params.set("tagName", tag);
+    if (assignedAgentId) params.set("assignedAgentId", assignedAgentId);
+    else if (unassigned) params.set("assignedAgentId", "null");
+
+    const res = await fetch(`/api/conversations?${params}`);
+    const data = await res.json();
+
+    const seen = new Set(users.map((u) => u.user.id));
+    const newItems: ConversationItem[] = [];
+    for (const conv of data.conversations) {
+      if (!seen.has(conv.user.id)) {
+        seen.add(conv.user.id);
+        newItems.push(conv);
+      }
+    }
+
+    setUsers((prev) => [...prev, ...newItems]);
+    setPage(nextPage);
+    setHasMore(data.conversations.length >= PAGE_SIZE);
+    setLoadingMore(false);
+  }
 
   useEffect(() => {
     fetchData();
@@ -396,6 +434,18 @@ export function LiveFeed({ assignedAgentId, currentAgentId, initialFollowedIds =
                 </div>
               );
             })}
+            {hasMore && (
+              <div className="px-5 py-3 flex justify-center">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  {loadingMore && <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />}
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -109,11 +109,7 @@ export async function getConversations(filters: ConversationFilters = {}) {
       { subject: { contains: search, mode: "insensitive" } },
       { user: { name: { contains: search, mode: "insensitive" } } },
       { user: { email: { contains: search, mode: "insensitive" } } },
-      {
-        messages: {
-          some: { content: { contains: search, mode: "insensitive" } },
-        },
-      },
+      { user: { externalId: { contains: search, mode: "insensitive" } } },
     ];
   }
 
@@ -216,57 +212,47 @@ export async function getConversations(filters: ConversationFilters = {}) {
 export async function getConversationById(id: number) {
   const t = perf(`getConversationById(${id})`);
 
-  // Round 1: cleanup stale streaming messages + fetch conversation scalars in parallel
-  const [, conv] = await Promise.all([
-    prisma.message.updateMany({
-      where: {
-        conversationId: id,
-        isStreaming: true,
-        createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
-      },
-      data: { isStreaming: false },
-    }),
-    prisma.conversation.findUnique({
-      where: { id },
-      select: {
-        id: true, userId: true, categories: true, status: true,
-        isAiPaused: true, assignedAgentId: true, priority: true,
-        subject: true, queuedAt: true, lastMessageAt: true,
-        lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,
-      },
-    }),
-  ]);
+  // Fetch conversation scalars (stale streaming cleanup moved to background — see cleanupStaleStreaming)
+  const conv = await prisma.conversation.findUnique({
+    where: { id },
+    select: {
+      id: true, userId: true, categories: true, status: true,
+      isAiPaused: true, assignedAgentId: true, priority: true,
+      subject: true, queuedAt: true, lastMessageAt: true,
+      lastReadByUserAt: true, createdAt: true, updatedAt: true, ticketId: true,
+    },
+  });
 
   if (!conv) {
     t.end();
     return null;
   }
 
-  // Round 2: fetch all relations in parallel (saves 1 sequential round vs nested include)
-  const [user, assignedAgent, ticket, tagRows, msgRows] = await Promise.all([
-    prisma.endUser.findUnique({
-      where: { id: conv.userId },
-      select: { id: true, name: true, email: true, phone: true, avatarUrl: true, externalId: true, createdAt: true },
-    }),
-    conv.assignedAgentId
-      ? prisma.agent.findUnique({
-          where: { id: conv.assignedAgentId },
-          select: { id: true, name: true, avatarUrl: true, email: true },
-        })
-      : Promise.resolve(null),
-    conv.ticketId
-      ? prisma.ticket.findUnique({ where: { id: conv.ticketId } })
-      : Promise.resolve(null),
-    // JOIN tag + tagDefinition — avoids a 3rd round
-    prisma.$queryRaw<TagRow[]>`
-      SELECT t.id, t."conversationId", t."definitionId", t."createdAt",
-             td.id AS "td_id", td.name AS "td_name", td.color AS "td_color"
-      FROM "Tag" t
-      JOIN "TagDefinition" td ON td.id = t."definitionId"
-      WHERE t."conversationId" = ${id}
-    `,
-    // JOIN message + agent + media in one query — avoids a 3rd round
-    prisma.$queryRaw<MsgWithRelationsRow[]>`
+  // Single round: fetch all relations in parallel using independent promises
+  // Each query uses its own connection from the pool to avoid serialization
+  const userP = prisma.endUser.findUnique({
+    where: { id: conv.userId },
+    select: { id: true, name: true, email: true, phone: true, avatarUrl: true, externalId: true, createdAt: true },
+  });
+  const agentP = conv.assignedAgentId
+    ? prisma.agent.findUnique({
+        where: { id: conv.assignedAgentId },
+        select: { id: true, name: true, avatarUrl: true, email: true },
+      })
+    : Promise.resolve(null);
+  const ticketP = conv.ticketId
+    ? prisma.ticket.findUnique({ where: { id: conv.ticketId } })
+    : Promise.resolve(null);
+  const tagsP = prisma.$queryRaw<TagRow[]>`
+    SELECT t.id, t."conversationId", t."definitionId", t."createdAt",
+           td.id AS "td_id", td.name AS "td_name", td.color AS "td_color"
+    FROM "Tag" t
+    JOIN "TagDefinition" td ON td.id = t."definitionId"
+    WHERE t."conversationId" = ${id}
+  `;
+  // Fetch last 200 messages (covers virtually all conversations; prevents huge payloads)
+  const msgsP = prisma.$queryRaw<MsgWithRelationsRow[]>`
+    SELECT * FROM (
       SELECT m.id, m."conversationId", m."senderType", m."senderId",
              m.content, m."isStreaming", m."isPrivate", m."mediaId", m."createdAt",
              a.id AS "a_id", a.name AS "a_name", a."avatarUrl" AS "a_avatarUrl",
@@ -276,8 +262,13 @@ export async function getConversationById(id: number) {
       LEFT JOIN "Agent" a ON a.id = m."senderId" AND m."senderType" = 'AGENT'
       LEFT JOIN "Media" med ON med.id = m."mediaId"
       WHERE m."conversationId" = ${id}
-      ORDER BY m."createdAt" ASC
-    `,
+      ORDER BY m."createdAt" DESC
+      LIMIT 200
+    ) sub ORDER BY sub."createdAt" ASC
+  `;
+
+  const [user, assignedAgent, ticket, tagRows, msgRows] = await Promise.all([
+    userP, agentP, ticketP, tagsP, msgsP,
   ]);
 
   const tags = tagRows.map((row) => ({
@@ -340,4 +331,18 @@ export async function updateConversationControl(
         data: { status: "ESCALATED", priority: "HIGH" },
       });
   }
+}
+
+/**
+ * Cleanup stale streaming messages — call periodically (e.g. every 60s),
+ * NOT on every getConversationById request.
+ */
+export async function cleanupStaleStreaming() {
+  return prisma.message.updateMany({
+    where: {
+      isStreaming: true,
+      createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
+    },
+    data: { isStreaming: false },
+  });
 }

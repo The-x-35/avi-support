@@ -884,7 +884,7 @@ async function handleClientMessage(ws: WebSocket, raw: string) {
 
 // ─── Server Setup ─────────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
+const PORT = parseInt(process.env.WS_PORT ?? process.env.PORT ?? "3001", 10);
 const ALLOWED_ORIGIN = process.env.NEXT_PUBLIC_APP_URL;
 const INTERNAL_KEY = process.env.WS_INTERNAL_KEY ?? "";
 
@@ -1068,5 +1068,21 @@ setInterval(async () => {
     console.error("[ws] Inactivity check error:", err);
   }
 }, 15 * 60 * 1000); // run every 15 minutes
+
+// Stale streaming cleanup — reset isStreaming on abandoned messages every 60s
+setInterval(async () => {
+  try {
+    const result = await prisma.message.updateMany({
+      where: {
+        isStreaming: true,
+        createdAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
+      },
+      data: { isStreaming: false },
+    });
+    if (result.count > 0) console.log(`[ws] Cleaned ${result.count} stale streaming messages`);
+  } catch (err) {
+    console.error("[ws] Stale streaming cleanup error:", err);
+  }
+}, 60_000);
 
 export {};

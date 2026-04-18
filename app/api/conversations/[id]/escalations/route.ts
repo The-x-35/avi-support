@@ -29,6 +29,7 @@ export const GET = withTiming("GET /api/conversations/[id]/escalations", async (
       assignee: { select: { id: true, name: true, email: true, avatarUrl: true } },
     },
     orderBy: { createdAt: "desc" },
+    take: 100,
   });
 
   return NextResponse.json(escalations);

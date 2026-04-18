@@ -6,7 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { StatusBadge, PriorityBadge, Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime, categoryLabel } from "@/lib/utils/format";
-import { Clock, Pause, AlertTriangle } from "lucide-react";
+import { Clock, Pause, AlertTriangle, Loader2 } from "lucide-react";
 
 interface ConversationItem {
   id: string;
@@ -27,10 +27,11 @@ export function Queue() {
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"paused" | "escalated" | "unassigned">("paused");
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const fetchQueue = async () => {
     setLoading(true);
-    const params: Record<string, string> = { limit: "100" };
+    const params: Record<string, string> = { limit: "100", skipCount: "true" };
 
     if (tab === "paused") params.isAiPaused = "true";
     else if (tab === "escalated") params.status = "ESCALATED";
@@ -51,21 +52,31 @@ export function Queue() {
   }, [tab]);
 
   async function handleTakeover(convId: string) {
-    await fetch(`/api/conversations/${convId}/control`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "takeover" }),
-    });
-    fetchQueue();
+    setActionLoading(`takeover-${convId}`);
+    try {
+      await fetch(`/api/conversations/${convId}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "takeover" }),
+      });
+      await fetchQueue();
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   async function handleResumeAI(convId: string) {
-    await fetch(`/api/conversations/${convId}/control`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "resume_ai" }),
-    });
-    fetchQueue();
+    setActionLoading(`resume-${convId}`);
+    try {
+      await fetch(`/api/conversations/${convId}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resume_ai" }),
+      });
+      await fetchQueue();
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   const tabs = [
@@ -171,6 +182,8 @@ export function Queue() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleResumeAI(conv.id)}
+                        loading={actionLoading === `resume-${conv.id}`}
+                        disabled={actionLoading !== null}
                       >
                         Resume AI
                       </Button>
@@ -179,6 +192,8 @@ export function Queue() {
                       variant="primary"
                       size="sm"
                       onClick={() => handleTakeover(conv.id)}
+                      loading={actionLoading === `takeover-${conv.id}`}
+                      disabled={actionLoading !== null}
                     >
                       Take over
                     </Button>

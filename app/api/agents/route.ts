@@ -26,9 +26,11 @@ export const GET = withTiming("GET /api/agents", async (request: NextRequest) =>
       avatarUrl: true,
       role: true,
       status: true,
+      maxConcurrentChats: true,
       createdAt: true,
     },
     orderBy: { name: "asc" },
+    take: 200,
   });
 
   return NextResponse.json(agents);

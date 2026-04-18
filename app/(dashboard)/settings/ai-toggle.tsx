@@ -32,13 +32,16 @@ export function AIToggle({ initialEnabled }: { initialEnabled: boolean; isAdmin:
           {enabled ? "AI handles new conversations automatically" : "Agents reply manually"}
         </p>
       </div>
-      <button
-        onClick={toggle}
-        disabled={saving}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${enabled ? "bg-gray-900" : "bg-gray-200"}`}
-      >
-        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
-      </button>
+      <div className="flex items-center gap-2">
+        {saving && <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin shrink-0" />}
+        <button
+          onClick={toggle}
+          disabled={saving}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${enabled ? "bg-gray-900" : "bg-gray-200"}`}
+        >
+          <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
+        </button>
+      </div>
     </div>
   );
 }

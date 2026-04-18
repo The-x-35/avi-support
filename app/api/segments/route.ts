@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   const segments = await prisma.segment.findMany({
     include: { createdBy: { select: { id: true, name: true, avatarUrl: true } } },
     orderBy: [{ isPinned: "desc" }, { createdAt: "desc" }],
+    take: 200,
   });
 
   return NextResponse.json(segments);

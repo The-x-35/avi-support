@@ -169,8 +169,8 @@ export const POST = withTiming("POST /api/conversations/[id]/merge", async (
     include: {
       user: true,
       assignedAgent: true,
-      tags: { include: { definition: true } },
-      messages: { orderBy: { createdAt: "asc" } },
+      tags: { include: { definition: true }, take: 100 },
+      messages: { orderBy: { createdAt: "asc" }, take: 200 },
     },
   });
 

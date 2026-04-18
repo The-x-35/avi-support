@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Loader2 } from "lucide-react";
 
 interface Agent {
   id: string;
@@ -76,15 +77,18 @@ export function AdminPanel({ agents, currentAgentId }: { agents: Agent[]; curren
                   onChange={(e) => setChatLimits((prev) => ({ ...prev, [agent.id]: Math.max(1, Math.min(100, parseInt(e.target.value) || 1)) }))}
                   className="w-8 text-xs text-center focus:outline-none"
                 />
-                <button onClick={() => saveChatLimit(agent.id)} disabled={loading === agent.id} className="text-[11px] text-blue-600 font-medium disabled:opacity-40">
+                <button onClick={() => saveChatLimit(agent.id)} disabled={loading === agent.id} className="text-[11px] text-blue-600 font-medium disabled:opacity-40 flex items-center gap-1">
+                  {loading === agent.id && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
                   Save
                 </button>
               </div>
               <Badge variant={agent.role === "ADMIN" ? "info" : "default"}>{agent.role}</Badge>
-              <button onClick={() => toggleRole(agent)} disabled={loading === agent.id} className="text-xs font-medium text-gray-500 hover:text-gray-800 disabled:opacity-40 transition-colors">
+              <button onClick={() => toggleRole(agent)} disabled={loading === agent.id} className="text-xs font-medium text-gray-500 hover:text-gray-800 disabled:opacity-40 transition-colors flex items-center gap-1">
+                {loading === agent.id && <Loader2 className="w-3 h-3 animate-spin" />}
                 {agent.role === "ADMIN" ? "Demote" : "Make Admin"}
               </button>
-              <button onClick={() => deactivate(agent)} disabled={loading === agent.id} className="text-xs font-medium text-red-400 hover:text-red-600 disabled:opacity-40 transition-colors">
+              <button onClick={() => deactivate(agent)} disabled={loading === agent.id} className="text-xs font-medium text-red-400 hover:text-red-600 disabled:opacity-40 transition-colors flex items-center gap-1">
+                {loading === agent.id && <Loader2 className="w-3 h-3 animate-spin" />}
                 Deactivate
               </button>
             </div>

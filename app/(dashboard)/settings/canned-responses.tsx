@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, X, Loader2 } from "lucide-react";
 
 interface CannedResponse {
   id: string;
@@ -19,6 +19,8 @@ export function CannedResponsesSettings() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/canned-responses")
@@ -47,18 +49,24 @@ export function CannedResponsesSettings() {
 
   async function saveEdit(id: string) {
     if (!editTitle.trim() || !editContent.trim()) return;
-    await fetch(`/api/canned-responses/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: editTitle.trim(), content: editContent.trim() }),
-    });
-    setItems((p) => p.map((item) => item.id === id ? { ...item, title: editTitle.trim(), content: editContent.trim() } : item));
-    setEditingId(null);
+    setEditSaving(true);
+    try {
+      await fetch(`/api/canned-responses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: editTitle.trim(), content: editContent.trim() }),
+      });
+      setItems((p) => p.map((item) => item.id === id ? { ...item, title: editTitle.trim(), content: editContent.trim() } : item));
+      setEditingId(null);
+    } finally { setEditSaving(false); }
   }
 
   async function remove(id: string) {
-    setItems((p) => p.filter((item) => item.id !== id));
-    await fetch(`/api/canned-responses/${id}`, { method: "DELETE" });
+    setRemovingId(id);
+    try {
+      setItems((p) => p.filter((item) => item.id !== id));
+      await fetch(`/api/canned-responses/${id}`, { method: "DELETE" });
+    } finally { setRemovingId(null); }
   }
 
   return (
@@ -110,7 +118,14 @@ export function CannedResponsesSettings() {
       )}
 
       {loading ? (
-        <div className="px-5 py-4 text-xs text-gray-400">Loading…</div>
+        <div className="px-5 py-4 space-y-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="animate-pulse space-y-1.5">
+              <div className="h-3.5 w-24 bg-gray-100 rounded" />
+              <div className="h-2.5 w-48 bg-gray-50 rounded" />
+            </div>
+          ))}
+        </div>
       ) : items.length === 0 && !addOpen ? (
         <div className="px-5 py-6 text-xs text-gray-400 text-center">No quick replies yet. Add one above.</div>
       ) : (
@@ -132,10 +147,10 @@ export function CannedResponsesSettings() {
                     className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-gray-400 resize-none"
                   />
                   <div className="flex gap-2">
-                    <button onClick={() => saveEdit(item.id)} className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors">
-                      <Check className="w-3 h-3" /> Save
+                    <button onClick={() => saveEdit(item.id)} disabled={editSaving} className="flex items-center gap-1 px-3 py-1 text-xs font-medium bg-gray-900 text-white rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-40">
+                      {editSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {editSaving ? "Saving…" : "Save"}
                     </button>
-                    <button onClick={() => setEditingId(null)} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-700 transition-colors">
+                    <button onClick={() => setEditingId(null)} disabled={editSaving} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-700 transition-colors disabled:opacity-40">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -155,9 +170,10 @@ export function CannedResponsesSettings() {
                     </button>
                     <button
                       onClick={() => remove(item.id)}
-                      className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      disabled={removingId === item.id}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      {removingId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                     </button>
                   </div>
                 </div>

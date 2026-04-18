@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Pencil, X, Loader2 } from "lucide-react";
 
 interface Props {
   agentId: string;
@@ -52,7 +52,7 @@ export function ProfileEditor({ initialName, email, avatarUrl, role }: Props) {
                 className="text-sm font-medium border border-gray-300 rounded-lg px-2.5 py-1 focus:outline-none focus:border-gray-500 w-48"
               />
               <button onClick={handleSave} disabled={saving} className="w-6 h-6 flex items-center justify-center rounded-md bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-40">
-                <Check className="w-3.5 h-3.5" />
+                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               </button>
               <button onClick={() => { setName(initialName); setEditing(false); }} className="w-6 h-6 flex items-center justify-center rounded-md border border-gray-200 text-gray-400 hover:bg-gray-50">
                 <X className="w-3.5 h-3.5" />

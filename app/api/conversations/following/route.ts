@@ -15,6 +15,7 @@ export const GET = withTiming("GET /api/conversations/following", async (request
   const rows = await prisma.conversationFollower.findMany({
     where: { agentId: auth.payload.agentId },
     select: { conversationId: true },
+    take: 500,
   });
 
   return NextResponse.json(rows.map((r) => r.conversationId));

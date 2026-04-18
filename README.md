@@ -163,3 +163,5 @@ Matching is case-insensitive and substring-based — e.g. "thanks so much" trigg
 6. Middleware validates access token on every request
 7. Expired access token → redirected to `/api/auth/refresh`
 8. Refresh rotates both tokens (revokes old refresh token in DB)
+
+--
